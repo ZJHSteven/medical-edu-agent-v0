@@ -85,6 +85,7 @@ describe("Medical study flow — deterministic stage machine", () => {
       finalDiagnosis: "Graves 病所致甲状腺功能亢进症",
       revisedReasoning: "结合临床表现、TRAb 与弥漫性甲状腺改变后提高诊断确定性。",
       evidenceImpact: "外部证据帮助我区分 Graves 病与甲状腺炎的病因判断路径。",
+      cognitiveBiasReflection: "起初存在过早闭合倾向，看到甲状腺毒症表现后没有先区分病因。",
       reflection: "最初没有主动区分甲状腺毒症和病因诊断。",
       confidence: 90
     };
@@ -92,6 +93,7 @@ describe("Medical study flow — deterministic stage machine", () => {
 
     expect(completed.stage).toBe("completed");
     expect(completed.finalReflection).toEqual(reflection);
+    expect(completed.finalReflection?.cognitiveBiasReflection).toContain("过早闭合");
     await expect(child.advanceToReflection()).rejects.toThrow(
       /当前阶段为 completed/
     );

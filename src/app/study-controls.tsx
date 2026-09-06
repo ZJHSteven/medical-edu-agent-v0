@@ -86,6 +86,7 @@ export function StudyControls({
   const [finalDiagnosis, setFinalDiagnosis] = useState("");
   const [revisedReasoning, setRevisedReasoning] = useState("");
   const [evidenceImpact, setEvidenceImpact] = useState("");
+  const [cognitiveBiasReflection, setCognitiveBiasReflection] = useState("");
   const [reflection, setReflection] = useState("");
   const [finalConfidence, setFinalConfidence] = useState(
     state.initialAssessment?.confidence ?? 50
@@ -277,6 +278,15 @@ export function StudyControls({
               />
             </label>
             <label className="grid gap-1.5 text-sm">
+              <span className="font-medium">认知偏差复盘</span>
+              <Textarea
+                value={cognitiveBiasReflection}
+                onChange={(event) => setCognitiveBiasReflection(event.target.value)}
+                placeholder="回看这次推理：是否出现过锚定、过早闭合、确认偏误等？哪一步体现出来，后来怎样修正？如果没有明显偏差也请说明。"
+                className="min-h-24"
+              />
+            </label>
+            <label className="grid gap-1.5 text-sm">
               <span className="font-medium">反思</span>
               <Textarea
                 value={reflection}
@@ -311,6 +321,7 @@ export function StudyControls({
                 !finalDiagnosis.trim() ||
                 !revisedReasoning.trim() ||
                 !evidenceImpact.trim() ||
+                !cognitiveBiasReflection.trim() ||
                 !reflection.trim()
               }
               onClick={() =>
@@ -319,6 +330,7 @@ export function StudyControls({
                     finalDiagnosis,
                     revisedReasoning,
                     evidenceImpact,
+                    cognitiveBiasReflection,
                     reflection,
                     confidence: finalConfidence
                   });

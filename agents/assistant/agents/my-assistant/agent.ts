@@ -136,6 +136,7 @@ const FINAL_REFLECTION_SCHEMA = z.object({
   finalDiagnosis: z.string().trim().min(1).max(500),
   revisedReasoning: z.string().trim().min(1).max(5000),
   evidenceImpact: z.string().trim().min(1).max(5000),
+  cognitiveBiasReflection: z.string().trim().min(1).max(5000),
   reflection: z.string().trim().min(1).max(5000),
   confidence: z.number().min(0).max(100)
 });

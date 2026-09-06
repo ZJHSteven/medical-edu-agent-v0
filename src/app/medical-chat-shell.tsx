@@ -331,30 +331,22 @@ export function MedicalChatShell({
       ])) as StudyState;
       setLocalStageBoundary({ stage: state.stage, startIndex: messages.length });
       setStudyState(state);
-      sendMessage({
-        role: "user",
-        metadata: {
-          medicalEdu: {
-            kind: "handoff",
-            targetStage: state.stage
-          }
-        },
-        parts: [
-          {
-            type: "text",
-            text:
-              `[[MEDICAL_EDU_HANDOFF:completed]]\n` +
-              `【最终判断与反思】\n最终诊断：${reflection.finalDiagnosis}\n` +
-              `修订后的推理：${reflection.revisedReasoning}\n` +
-              `循证信息的影响：${reflection.evidenceImpact}\n` +
-              `个人反思：${reflection.reflection}\n` +
-              `最终把握度：${reflection.confidence}%\n\n` +
-              "请给出简短学习总结。"
-          }
-        ]
-      });
+      // 与前面三个阶段完全使用同一条 handoff 路径：状态推进后，在同一个
+      // Think session 中追加隐藏控制消息，让 completed 阶段继续复用已有上下文
+      // 与 provider prompt cache。不要为总结再创建第二套 RPC/Agent 交互机制。
+      sendText(
+        `[[MEDICAL_EDU_HANDOFF:completed]]\n` +
+          `【最终判断与反思】\n最终诊断：${reflection.finalDiagnosis}\n` +
+          `修订后的推理：${reflection.revisedReasoning}\n` +
+          `循证信息的影响：${reflection.evidenceImpact}\n` +
+          `认知偏差复盘：${reflection.cognitiveBiasReflection}\n` +
+          `个人反思：${reflection.reflection}\n` +
+          `最终把握度：${reflection.confidence}%\n\n` +
+          "请按照完成阶段约定生成结构化学习总结、证据账本、认知偏差复盘和 AI 形成性评价。",
+        state.stage
+      );
     },
-    [agent, isStreaming, messages.length, sendMessage]
+    [agent, isStreaming, messages.length, sendText]
   );
 
   const visibleMessages = useMemo(() => {
@@ -395,6 +387,14 @@ export function MedicalChatShell({
         .find((message) => message.role === "assistant")?.id,
     [visibleMessages]
   );
+
+  const completedSummaryText = useMemo(() => {
+    if (studyState?.stage !== "completed") return "";
+    const assistant = [...visibleMessages]
+      .reverse()
+      .find((message) => message.role === "assistant");
+    return assistant ? messageText(assistant) : "";
+  }, [studyState?.stage, visibleMessages]);
 
   const medicalCase = chat.caseId ? getPublicMedicalCase(chat.caseId) : null;
 
@@ -513,7 +513,9 @@ export function MedicalChatShell({
               </div>
               <div className="min-w-0">
                 <div className="text-xs font-semibold tracking-wide">
-                  {stageRoleLabel(studyState.stage)} 已接管当前会话
+                  {studyState.stage === "completed"
+                    ? "学习总结 · 本次训练完成"
+                    : `${stageRoleLabel(studyState.stage)} 已接管当前会话`}
                 </div>
                 <div className="truncate text-[11px] text-muted-foreground">
                   {stageAgentDescription(studyState.stage)}
@@ -521,14 +523,19 @@ export function MedicalChatShell({
               </div>
             </div>
           </div>
-          <StudyTraceSummary
-            state={studyState}
-            onExport={exportStudyData}
-            exporting={exportingStudyData}
-          />
         </>
       ) : null}
 
+      {studyState?.stage === "completed" ? (
+        <StudyTraceSummary
+          state={studyState}
+          onExport={exportStudyData}
+          exporting={exportingStudyData}
+          aiSummary={completedSummaryText}
+          summarizing={isStreaming}
+        />
+      ) : (
+      <>
       <Conversation className="min-h-0 flex-1">
         <ConversationContent
           key={studyState?.stage ?? "loading"}
@@ -582,14 +589,14 @@ export function MedicalChatShell({
         isStreaming={isStreaming}
         hasError={Boolean(error || studyError)}
         disabled={
-          connectionStatus !== "connected" ||
-          !studyState ||
-          studyState.stage === "completed"
+          connectionStatus !== "connected" || !studyState
         }
         onDraftChange={setDraft}
         onSend={sendText}
         onStop={stop}
       />
+      </>
+      )}
     </section>
   );
 }

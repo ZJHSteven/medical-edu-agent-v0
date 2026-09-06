@@ -37,6 +37,7 @@ export type FinalReflection = {
   finalDiagnosis: string;
   revisedReasoning: string;
   evidenceImpact: string;
+  cognitiveBiasReflection: string;
   reflection: string;
   confidence: number;
 };
