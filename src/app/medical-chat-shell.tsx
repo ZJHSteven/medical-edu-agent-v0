@@ -4,6 +4,7 @@ import {
   ConversationEmptyState,
   ConversationScrollButton
 } from "@/components/ai-elements/conversation";
+import { Message, MessageContent } from "@/components/ai-elements/message";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Button } from "@/components/ui/button";
 import {
@@ -251,6 +252,11 @@ function assistantMessageHasVisibleContent(message: UIMessage | undefined) {
   });
 }
 
+function messageHasVisibleContent(message: UIMessage) {
+  if (message.role === "assistant") return assistantMessageHasVisibleContent(message);
+  return Boolean(messageText(message).trim());
+}
+
 function StageAgentIcon({ stage }: { stage: StudyStage }) {
   if (stage === "history") return <UserRoundIcon className="size-4" />;
   if (stage === "evidence") return <BookOpenCheckIcon className="size-4" />;
@@ -277,6 +283,8 @@ export function MedicalChatShell({
   const [studyState, setStudyState] = useState<StudyState | null>(null);
   const [studyError, setStudyError] = useState<string | null>(null);
   const [exportingStudyData, setExportingStudyData] = useState(false);
+  const [awaitingFirstResponse, setAwaitingFirstResponse] = useState(false);
+  const pendingAssistantBaselineId = useRef<string | null>(null);
   const [localStageBoundary, setLocalStageBoundary] = useState<{
     stage: StudyStage;
     startIndex: number;
@@ -355,6 +363,10 @@ export function MedicalChatShell({
       if (isStreaming || !text.trim()) return;
       clearError();
       setDraft("");
+      pendingAssistantBaselineId.current =
+        [...messages].reverse().find((message) => message.role === "assistant")?.id ??
+        null;
+      setAwaitingFirstResponse(true);
       sendMessage({
         role: "user",
         ...(handoffTargetStage
@@ -370,7 +382,7 @@ export function MedicalChatShell({
         parts: [{ type: "text", text: text.trim() }]
       });
     },
-    [clearError, isStreaming, sendMessage]
+    [clearError, isStreaming, messages, sendMessage]
   );
 
   const submitInitial = useCallback(
@@ -474,18 +486,39 @@ export function MedicalChatShell({
       .filter((message) => !isInternalHandoffMessage(message));
   }, [localStageBoundary, messages, studyState]);
 
-  const lastAssistantId = useMemo(
-    () =>
-      [...visibleMessages]
-        .reverse()
-        .find((message) => message.role === "assistant")?.id,
+  const displayMessages = useMemo(
+    () => visibleMessages.filter(messageHasVisibleContent),
     [visibleMessages]
   );
 
-  const showThinkingPlaceholder = useMemo(() => {
-    if (!isStreaming || studyState?.stage === "completed") return false;
-    return !assistantMessageHasVisibleContent(visibleMessages.at(-1));
-  }, [isStreaming, studyState?.stage, visibleMessages]);
+  const lastAssistantId = useMemo(
+    () =>
+      [...displayMessages]
+        .reverse()
+        .find((message) => message.role === "assistant")?.id,
+    [displayMessages]
+  );
+
+  useEffect(() => {
+    if (!awaitingFirstResponse) return;
+    const latestAssistant = [...messages]
+      .reverse()
+      .find((message) => message.role === "assistant");
+    if (
+      latestAssistant &&
+      latestAssistant.id !== pendingAssistantBaselineId.current &&
+      assistantMessageHasVisibleContent(latestAssistant)
+    ) {
+      setAwaitingFirstResponse(false);
+    }
+  }, [awaitingFirstResponse, messages]);
+
+  useEffect(() => {
+    if (error || studyError) setAwaitingFirstResponse(false);
+  }, [error, studyError]);
+
+  const showThinkingPlaceholder =
+    awaitingFirstResponse && studyState?.stage !== "completed";
 
   const completedSummaryText = useMemo(() => {
     if (studyState?.stage !== "completed") return "";
@@ -668,7 +701,7 @@ export function MedicalChatShell({
           onExport={exportStudyData}
           exporting={exportingStudyData}
           aiSummary={completedSummaryText}
-          summarizing={isStreaming}
+          summarizing={awaitingFirstResponse || isStreaming}
           evidenceLedger={evidenceLedger}
           onRegenerateSummary={() => requestCompletionSummary(true)}
         />
@@ -679,7 +712,7 @@ export function MedicalChatShell({
           key={studyState?.stage ?? "loading"}
           className="mx-auto w-full max-w-3xl gap-7 px-4 pb-4 pt-6 sm:px-6"
         >
-          {visibleMessages.length === 0 ? (
+          {displayMessages.length === 0 && !showThinkingPlaceholder ? (
             <ConversationEmptyState
               icon={<StethoscopeIcon className="size-6" />}
               title={
@@ -696,7 +729,7 @@ export function MedicalChatShell({
               className="min-h-[46vh]"
             />
           ) : (
-            visibleMessages.map((message) => (
+            displayMessages.map((message) => (
               <ChatMessageView
                 key={message.id}
                 message={message}
@@ -717,9 +750,16 @@ export function MedicalChatShell({
           ) : null}
 
           {showThinkingPlaceholder && studyState ? (
-            <div className="flex min-h-10 items-center px-1 py-1 text-sm text-muted-foreground">
-              <Shimmer duration={1.2}>{stageThinkingLabel(studyState.stage)}</Shimmer>
-            </div>
+            <Message from="assistant" className="max-w-full">
+              <MessageContent className="max-w-full">
+                <div className="inline-flex min-h-6 items-center gap-2 text-sm text-muted-foreground">
+                  <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-current" />
+                  <Shimmer duration={1.2}>
+                    {stageThinkingLabel(studyState.stage)}
+                  </Shimmer>
+                </div>
+              </MessageContent>
+            </Message>
           ) : null}
         </ConversationContent>
         <ConversationScrollButton />
@@ -737,7 +777,10 @@ export function MedicalChatShell({
         }
         onDraftChange={setDraft}
         onSend={sendText}
-        onStop={stop}
+        onStop={() => {
+          setAwaitingFirstResponse(false);
+          stop();
+        }}
       />
       </>
       )}
