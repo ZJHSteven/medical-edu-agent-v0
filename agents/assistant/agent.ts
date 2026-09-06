@@ -6,6 +6,8 @@ import type { FileInfo, WorkspaceChangeEvent } from "@cloudflare/shell";
 import { nanoid } from "nanoid";
 import { MyAssistant } from "./agents/my-assistant/agent";
 import type { ChatSummary, DirectoryState, McpToolDescriptor } from "./types";
+import { getMedicalCase, hasMedicalCase } from "../medical/cases";
+import type { StudyStage } from "../../shared/study";
 
 // ── AssistantDirectory — one DO per authenticated GitHub user ─────────
 //
@@ -86,7 +88,9 @@ export class AssistantDirectory extends Think<Env, DirectoryState> {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       updated_at INTEGER NOT NULL,
-      last_message_preview TEXT
+      last_message_preview TEXT,
+      case_id TEXT,
+      stage TEXT
     )`;
     this._refreshState();
 
@@ -150,7 +154,9 @@ export class AssistantDirectory extends Think<Env, DirectoryState> {
       title: string;
       updated_at: number;
       last_message_preview: string | null;
-    }>`SELECT id, title, updated_at, last_message_preview FROM chat_meta`;
+      case_id: string | null;
+      stage: StudyStage | null;
+    }>`SELECT id, title, updated_at, last_message_preview, case_id, stage FROM chat_meta`;
     const metaById = new Map(metaRows.map((row) => [row.id, row]));
 
     const chats: ChatSummary[] = registry
@@ -161,7 +167,9 @@ export class AssistantDirectory extends Think<Env, DirectoryState> {
           title: meta?.title ?? defaultChatTitle(entry.createdAt),
           createdAt: entry.createdAt,
           updatedAt: meta?.updated_at ?? entry.createdAt,
-          lastMessagePreview: meta?.last_message_preview ?? undefined
+          lastMessagePreview: meta?.last_message_preview ?? undefined,
+          caseId: meta?.case_id ?? undefined,
+          stage: meta?.stage ?? undefined
         };
       })
       .sort((a, b) => b.updatedAt - a.updatedAt);
@@ -172,25 +180,35 @@ export class AssistantDirectory extends Think<Env, DirectoryState> {
   // ── Chat lifecycle (RPC from the sidebar) ──────────────────────────
 
   @callable()
-  async createChat(opts?: { title?: string }): Promise<ChatSummary> {
+  async createChat(opts?: { title?: string; caseId?: string }): Promise<ChatSummary> {
     const id = nanoid(10);
     const now = Date.now();
-    const title = opts?.title?.trim() || defaultChatTitle(now);
+    const caseId = opts?.caseId ?? "thyrotoxicosis-001";
+    if (!hasMedicalCase(caseId)) {
+      throw new Error(`未知病例：${caseId}`);
+    }
+    const medicalCase = getMedicalCase(caseId);
+    const title = opts?.title?.trim() || medicalCase.title || defaultChatTitle(now);
 
     // Spawn the facet FIRST so the registry is populated. If the
     // metadata INSERT fails for any reason, a subsequent `deleteChat`
     // or `_refreshState` will still find the chat via the registry.
-    await this.subAgent(MyAssistant, id);
+    const child = await this.subAgent(MyAssistant, id);
+    // 先初始化病例训练，再写目录元数据。这样目录里出现的训练一定已经有
+    // 对应的子 Agent 状态，不会产生“侧栏看得到但点进去还没绑定病例”的竞态。
+    await child.initializeStudy(caseId);
     this.sql`
-      INSERT INTO chat_meta (id, title, updated_at, last_message_preview)
-      VALUES (${id}, ${title}, ${now}, NULL)
+      INSERT INTO chat_meta (id, title, updated_at, last_message_preview, case_id, stage)
+      VALUES (${id}, ${title}, ${now}, NULL, ${caseId}, ${"history"})
     `;
     this._refreshState();
     return {
       id,
       title,
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      caseId,
+      stage: "history"
     };
   }
 
@@ -232,16 +250,33 @@ export class AssistantDirectory extends Think<Env, DirectoryState> {
    */
   async recordChatTurn(chatId: string, preview: string): Promise<void> {
     this.sql`
-      INSERT INTO chat_meta (id, title, updated_at, last_message_preview)
+      INSERT INTO chat_meta (id, title, updated_at, last_message_preview, case_id, stage)
       VALUES (
         ${chatId},
         ${defaultChatTitle(Date.now())},
         ${Date.now()},
-        ${preview}
+        ${preview},
+        NULL,
+        NULL
       )
       ON CONFLICT(id) DO UPDATE SET
         updated_at = excluded.updated_at,
         last_message_preview = excluded.last_message_preview
+    `;
+    this._refreshState();
+  }
+
+  /**
+   * 子 Agent 每次推进教学阶段后回写目录摘要。
+   *
+   * 目录只保存当前阶段，详细提交内容仍留在子 Agent 的研究数据库中，避免
+   * 把大量实验 payload 重复复制到侧栏状态。
+   */
+  async recordStudyStage(chatId: string, stage: StudyStage): Promise<void> {
+    this.sql`
+      UPDATE chat_meta
+      SET stage = ${stage}, updated_at = ${Date.now()}
+      WHERE id = ${chatId}
     `;
     this._refreshState();
   }
