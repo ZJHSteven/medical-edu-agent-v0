@@ -460,6 +460,27 @@ export class MyAssistant extends Think<Env> {
           limit: z.number().int().min(1).max(8).default(5)
         }),
         execute: async ({ query, limit }) => {
+          /**
+           * 课堂实验不能让模型因为“再搜一篇也许更好”无限扩张检索成本。
+           * `beforeToolCall` 会在 execute 前把本次调用写入 study_events，因此这里
+           * 统计当前循证阶段已经发起的 tool_call；前 4 次允许真实访问，第 5 次
+           * 起只返回明确的预算耗尽信号，不再向 Europe PMC 发网络请求。
+           *
+           * 当前循证阶段只开放这一个工具，所以无需再按 toolName 解析 JSON。
+           * 将来若增加指南库/药典工具，再把预算改成独立的 tool_name 列即可。
+           */
+          const [budget] = this.sql<{ count: number }>`SELECT COUNT(*) AS count
+            FROM study_events
+            WHERE event_type = ${"tool_call"} AND stage = ${"evidence"}`;
+          const callCount = budget?.count ?? 0;
+          if (callCount > 4) {
+            return {
+              budgetExhausted: true,
+              message:
+                "本病例循证阶段的 4 次真实检索预算已用尽。请停止继续检索，基于已有结果进行综合，并如实说明证据缺口。"
+            };
+          }
+
           const url = new URL(
             "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
           );
@@ -537,6 +558,10 @@ export class MyAssistant extends Think<Env> {
       activeTools:
         state.stage === "evidence" ? ["search_medical_evidence"] : [],
       instructions: buildStudyInstructions(state.stage, medicalCase),
+      // 循证阶段允许“提出问题 → 工具 → 综合”的少量循环，但没有必要像通用
+      // Agent 那样无限 tool loop。配合工具本身的 4 次真实检索硬预算，最多四个
+      // 模型 step 足够完成一次课堂循证任务，也能避免模型在失败查询上反复试探。
+      maxSteps: state.stage === "evidence" ? 4 : 3,
       // 隐藏模型内部 reasoning，避免额外信息影响学生的学习过程。
       sendReasoning: false,
       // Sub2API 会用显式会话信号做 sticky scheduling。让 session/thread/cache

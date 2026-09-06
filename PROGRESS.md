@@ -38,6 +38,8 @@
   - [x] 移除医学 Demo 已不使用的远程 Browser binding，避免本地 Vite 强制创建 Cloudflare remote preview session。
   - [x] 浏览器真实问诊与临床导师阶段已跑通；修复阶段推进后结构化 Dialog 仍可见的问题。
   - [x] 修复 AI Elements `MessageAction` 的 TooltipTrigger 嵌套 button React 警告。
+  - [x] 完整病例闭环已用真实 DeepSeek + Europe PMC 跑到 completed，并验证刷新后状态、聊天和工具痕迹持久化恢复。
+  - [x] 循证阶段增加“提示词收敛 + 最多 4 次真实 Europe PMC 请求”的硬预算，并将 evidence turn 限为最多 4 个模型 step。
   - [ ] 本地真实 Provider + 浏览器端到端验收。
   - [ ] 建立远程仓库并部署独立医学 Demo。
 
