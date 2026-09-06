@@ -60,17 +60,6 @@ function messageText(message: UIMessage) {
     .join("");
 }
 
-function isCompletionSummaryComplete(text: string) {
-  const requiredSections = [
-    /本次推理轨迹/,
-    /Evidence Ledger|证据账本/i,
-    /认知偏差复盘/,
-    /形成性评价/,
-    /下一步建议/
-  ];
-  return requiredSections.every((pattern) => pattern.test(text));
-}
-
 function evidenceLedgerFromMessages(messages: UIMessage[]): EvidenceLedgerEntry[] {
   const entries: EvidenceLedgerEntry[] = [];
 
@@ -289,7 +278,6 @@ export function MedicalChatShell({
     stage: StudyStage;
     startIndex: number;
   } | null>(null);
-  const completionSummaryNeedsValidation = useRef(false);
 
   const agent = useAgent({
     agent: "AssistantDirectory",
@@ -436,7 +424,6 @@ export function MedicalChatShell({
       ])) as StudyState;
       setLocalStageBoundary({ stage: state.stage, startIndex: messages.length });
       setStudyState(state);
-      completionSummaryNeedsValidation.current = true;
       // 与前面三个阶段完全使用同一条 handoff 路径：状态推进后，在同一个
       // Think session 中追加隐藏控制消息，让 completed 阶段继续复用已有上下文
       // 与 provider prompt cache。不要为总结再创建第二套 RPC/Agent 交互机制。
@@ -464,7 +451,15 @@ export function MedicalChatShell({
     let boundaryIndex = -1;
     for (let index = 0; index < messages.length; index += 1) {
       if (handoffTarget(messages[index]) === studyState.stage) {
-        boundaryIndex = index;
+        if (studyState.stage === "completed") {
+          // completed 允许后续“重新生成总结”，但这些 repair/regenerate handoff
+          // 仍然属于同一个第五阶段，不能把第一次已经生成并持久化的总结切掉。
+          // 因此第五阶段固定使用“第一次进入 completed”的边界；其他阶段仍取
+          // 最后一次 handoff，以便正常恢复当前 Agent 会话段。
+          if (boundaryIndex < 0) boundaryIndex = index;
+        } else {
+          boundaryIndex = index;
+        }
       }
     }
 
@@ -534,10 +529,10 @@ export function MedicalChatShell({
   );
 
   const requestCompletionSummary = useCallback(
-    (validateResult = true) => {
+    () => {
       if (isStreaming || studyState?.stage !== "completed") return;
-      completionSummaryNeedsValidation.current = validateResult;
-      setLocalStageBoundary({ stage: "completed", startIndex: messages.length });
+      // 不推进 completed 的视觉边界。旧总结在重生成期间继续保留，只有新
+      // assistant 总结真正到达后，completedSummaryText 才会自然切到新版。
       sendText(
         `[[MEDICAL_EDU_HANDOFF:completed]]\n` +
           "请重新生成本次第五阶段学习结算。上一版可能缺少规定结构。" +
@@ -546,24 +541,8 @@ export function MedicalChatShell({
         "completed"
       );
     },
-    [isStreaming, messages.length, sendText, studyState?.stage]
+    [isStreaming, sendText, studyState?.stage]
   );
-
-  useEffect(() => {
-    if (!completionSummaryNeedsValidation.current) return;
-    if (studyState?.stage !== "completed" || isStreaming || !completedSummaryText) {
-      return;
-    }
-    if (isCompletionSummaryComplete(completedSummaryText)) {
-      completionSummaryNeedsValidation.current = false;
-      return;
-    }
-
-    // 新完成回合允许一次自动修复；如果第二次仍不完整，不继续自循环，页面上的
-    // “重新生成总结”仍允许用户手动再次请求同一 completed Agent。
-    completionSummaryNeedsValidation.current = false;
-    requestCompletionSummary(false);
-  }, [completedSummaryText, isStreaming, requestCompletionSummary, studyState?.stage]);
 
   const medicalCase = chat.caseId ? getPublicMedicalCase(chat.caseId) : null;
 
@@ -703,7 +682,7 @@ export function MedicalChatShell({
           aiSummary={completedSummaryText}
           summarizing={awaitingFirstResponse || isStreaming}
           evidenceLedger={evidenceLedger}
-          onRegenerateSummary={() => requestCompletionSummary(true)}
+          onRegenerateSummary={requestCompletionSummary}
         />
       ) : (
       <>
