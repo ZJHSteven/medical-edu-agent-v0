@@ -169,96 +169,55 @@ export class MyAssistant extends Think<Env> {
   }
 
   getTools(): ToolSet {
-    const resolved = resolveFamilyModel(this.env, this.getConfig<AgentConfig>());
-
     return {
-      // Codex / OpenAI Responses 路由把 Web Search 作为当前主模型同一次
-      // `streamText` 的 provider-executed hosted tool。模型自己决定何时调用，
-      // `web_search_call`、reasoning 与 sources 都留在原 turn 中；不会再额外
-      // 启动一次模型请求，因此不会平白重复系统提示词和上下文 token。
-      ...(resolved.route.capabilities.nativeWebSearch && resolved.openaiProvider
-        ? {
-            web_search: resolved.openaiProvider.tools.webSearch({
-              searchContextSize: "medium",
-              externalWebAccess: true
-            })
+      /**
+       * 第一版只保留一个可审计的真实医学文献检索工具。
+       * Europe PMC 的 REST API 不需要额外密钥，返回 PMID/PMCID/DOI 等可核验
+       * 标识，适合 Demo 和后续研究数据审计；正式实验再根据老师要求补指南库。
+       */
+      search_medical_evidence: tool({
+        description:
+          "Search real biomedical literature in Europe PMC. Only use during the evidence stage.",
+        inputSchema: z.object({
+          query: z.string().min(2).describe("Biomedical literature query in English"),
+          limit: z.number().int().min(1).max(8).default(5)
+        }),
+        execute: async ({ query, limit }) => {
+          const url = new URL(
+            "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+          );
+          url.searchParams.set("query", query);
+          url.searchParams.set("format", "json");
+          url.searchParams.set("resultType", "lite");
+          url.searchParams.set("pageSize", String(limit));
+
+          const response = await fetch(url, {
+            headers: { Accept: "application/json" }
+          });
+          if (!response.ok) {
+            throw new Error(`Europe PMC 检索失败：HTTP ${response.status}`);
           }
-        : {}),
 
-      // Workers Free 目前不能部署 Worker Loader / Dynamic Workers。
-      // 因此这里把 Think 的共享 Workspace 工具直接暴露给模型：文件仍然持久化、
-      // 仍然跨聊天共享，只是不再经过 Code Mode 的动态沙箱执行层。
-      ...createWorkspaceTools(this.workspace),
-
-      // 保留一个独立的审批工具，用来继续试玩 Think 的 durable approval 流程；
-      // 它不依赖 Dynamic Workers，因此免费计划也能完整体验批准 / 拒绝。
-      sendAnnouncement: tool({
-        description:
-          "Send an announcement to the team channel. Requires human approval before it goes out.",
-        inputSchema: z.object({
-          message: z.string().describe("The announcement text")
-        }),
-        needsApproval: true,
-        execute: async ({ message }) => ({
-          sent: true,
-          message
-        })
-      }),
-
-      // Stateless one-shot browsing (no CDP session, no sandbox): read a page
-      // as Markdown, extract structured data with AI, list links, or scrape
-      // elements. Complements the interactive `cdp.*` inside `execute` above —
-      // the model picks Quick Actions for simple reads and `execute` for
-      // multi-step automation. Shares the same `BROWSER` binding.
-      ...createQuickActionTools({ browser: this.env.BROWSER }),
-
-      getWeather: tool({
-        description: "Get the current weather for a city",
-        inputSchema: z.object({
-          city: z.string().describe("City name")
-        }),
-        execute: async ({ city }) => {
-          const conditions = ["sunny", "cloudy", "rainy", "snowy"];
-          const temp = Math.floor(Math.random() * 30) + 5;
-          return {
-            city,
-            temperature: temp,
-            condition:
-              conditions[Math.floor(Math.random() * conditions.length)],
-            unit: "celsius"
+          const payload = (await response.json()) as {
+            hitCount?: number;
+            resultList?: { result?: EuropePmcResult[] };
           };
-        }
-      }),
+          const results = (payload.resultList?.result ?? []).map((item) => ({
+            title: item.title ?? "Untitled",
+            authors: item.authorString ?? "",
+            journal: item.journalTitle ?? "",
+            year: item.pubYear ?? "",
+            pmid: item.pmid ?? (item.source === "MED" ? item.id : undefined),
+            pmcid: item.pmcid,
+            doi: item.doi,
+            source: item.source,
+            id: item.id
+          }));
 
-      getUserTimezone: tool({
-        description:
-          "Get the user's timezone from their browser. Use this when you need to know the user's local time.",
-        inputSchema: z.object({})
-      }),
-
-      calculate: tool({
-        description:
-          "Perform a math calculation. Requires approval for large numbers (over 1000).",
-        inputSchema: z.object({
-          a: z.number().describe("First number"),
-          b: z.number().describe("Second number"),
-          operator: z.enum(["+", "-", "*", "/"]).describe("Arithmetic operator")
-        }),
-        needsApproval: async ({ a, b }) =>
-          Math.abs(a) > 1000 || Math.abs(b) > 1000,
-        execute: async ({ a, b, operator }) => {
-          const ops: Record<string, (x: number, y: number) => number> = {
-            "+": (x, y) => x + y,
-            "-": (x, y) => x - y,
-            "*": (x, y) => x * y,
-            "/": (x, y) => x / y
-          };
-          if (operator === "/" && b === 0) {
-            return { error: "Division by zero" };
-          }
           return {
-            expression: `${a} ${operator} ${b}`,
-            result: ops[operator](a, b)
+            query,
+            hitCount: payload.hitCount ?? null,
+            results
           };
         }
       })
