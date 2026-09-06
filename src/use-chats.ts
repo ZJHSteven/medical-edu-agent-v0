@@ -66,8 +66,8 @@ export interface UseChats {
    * message (add, remove, auth completes, connection state changes).
    */
   mcpState: MCPServersState;
-  /** Create a new chat and return it. */
-  createChat: (opts?: { title?: string }) => Promise<ChatSummary>;
+  /** 创建一次病例训练；caseId 由公开病例目录选择。 */
+  createChat: (opts: { title?: string; caseId: string }) => Promise<ChatSummary>;
   /** Rename a chat. No-op if the new title is empty. */
   renameChat: (id: string, title: string) => Promise<void>;
   /** Delete a chat (idempotent — safe to call for an already-gone id). */
@@ -133,8 +133,8 @@ export function useChats(): UseChats {
   const chats: ChatSummary[] = directory.state?.chats ?? [];
 
   const createChat = useCallback(
-    async (opts?: { title?: string }) =>
-      (await directory.call("createChat", opts ? [opts] : [])) as ChatSummary,
+    async (opts: { title?: string; caseId: string }) =>
+      (await directory.call("createChat", [opts])) as ChatSummary,
     [directory]
   );
 

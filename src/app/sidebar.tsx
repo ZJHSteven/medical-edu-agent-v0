@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/sheet";
 import type { ChatSummary } from "../../agents/assistant/types";
 import type { AuthUser } from "../auth-client";
+import { STUDY_STAGE_LABELS } from "../../shared/study";
 import {
   FolderIcon,
   LogOutIcon,
@@ -71,7 +72,7 @@ function ChatList({
         <Input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="搜索聊天"
+          placeholder="搜索训练"
           // 手机侧栏里的搜索框也必须保持 16px，避免 iOS Safari 聚焦后放大整页。
           // 桌面侧栏从 md 起恢复紧凑的 12px。
           className="h-8 border-transparent bg-muted/60 pl-8 text-base shadow-none md:text-xs"
@@ -79,24 +80,24 @@ function ChatList({
       </div>
 
       <div className="px-3 pb-1 pt-4 text-[11px] font-medium text-muted-foreground">
-        项目
+        教学项目
       </div>
       <button
         type="button"
         className="mx-2 flex h-9 w-[calc(100%-1rem)] items-center gap-2 rounded-lg px-2.5 text-left text-sm transition-colors hover:bg-accent"
       >
         <FolderIcon className="size-4 text-muted-foreground" />
-        <span className="truncate">家庭</span>
+        <span className="truncate">医学临床推理</span>
       </button>
 
       <div className="px-3 pb-1 pt-4 text-[11px] font-medium text-muted-foreground">
-        最近聊天
+        训练记录
       </div>
       <ScrollArea className="min-h-0 flex-1 px-2">
         <div className="flex flex-col gap-0.5 pb-4">
           {visible.length === 0 ? (
             <div className="px-2 py-5 text-center text-xs text-muted-foreground">
-              {query ? "没有匹配的聊天" : "还没有聊天"}
+              {query ? "没有匹配的训练" : "还没有训练记录"}
             </div>
           ) : null}
           {visible.map((chat) => (
@@ -112,6 +113,11 @@ function ChatList({
                 className="min-w-0 flex-1 px-2.5 py-2 text-left"
               >
                 <div className="truncate text-[13px] font-medium">{chat.title}</div>
+                {chat.stage ? (
+                  <div className="mt-0.5 text-[10px] font-medium text-muted-foreground">
+                    {STUDY_STAGE_LABELS[chat.stage]}
+                  </div>
+                ) : null}
                 {chat.lastMessagePreview ? (
                   <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
                     {chat.lastMessagePreview}
@@ -157,7 +163,7 @@ function SidebarInner(props: SidebarProps & { mobile?: boolean; onClose?: () => 
         <div className="flex size-8 items-center justify-center rounded-xl bg-foreground text-background">
           <SparklesIcon className="size-4" />
         </div>
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold">Family AI</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold">医学临床推理训练</span>
         {props.mobile && props.onClose ? (
           <Button
             type="button"
@@ -179,7 +185,7 @@ function SidebarInner(props: SidebarProps & { mobile?: boolean; onClose?: () => 
           onClick={() => void props.onNewChat()}
         >
           <PlusIcon />
-          新聊天
+          新病例训练
         </Button>
       </div>
 
@@ -253,7 +259,7 @@ export function MobileSidebar({
         // 关闭 Sheet 自带的通用 X，避免手机右上角两个关闭图标叠在一起。
         showCloseButton={false}
       >
-        <SheetTitle className="sr-only">Family AI 导航</SheetTitle>
+        <SheetTitle className="sr-only">医学临床推理训练导航</SheetTitle>
         <SidebarInner {...props} mobile onClose={() => onOpenChange(false)} />
       </SheetContent>
     </Sheet>

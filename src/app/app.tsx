@@ -1,19 +1,12 @@
 import { LoaderCircleIcon } from "lucide-react";
-import type { FileUIPart } from "ai";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { AgentConfig } from "../../agents/assistant/types";
+import { getPublicMedicalCase } from "../../shared/medical-cases";
 import { fetchCurrentUser, signOut, type AuthUser } from "../auth-client";
 import { useChats } from "../use-chats";
+import { CaseStartShell } from "./case-start-shell";
 import { ChatShell } from "./chat-shell";
-import { DraftChatShell } from "./draft-chat-shell";
 import { LoginScreen } from "./login-screen";
 import { DesktopSidebar, MobileSidebar } from "./sidebar";
-
-function provisionalTitle(text: string, files: FileUIPart[]) {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized) return files.length > 0 ? "文件处理" : "新聊天";
-  return normalized.length > 24 ? `${normalized.slice(0, 24)}…` : normalized;
-}
 
 function AuthenticatedApp({
   user,
@@ -30,13 +23,7 @@ function AuthenticatedApp({
     deleteChat
   } = useChats();
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
-  const [draftMode, setDraftMode] = useState(false);
-  const [pendingFirstTurn, setPendingFirstTurn] = useState<{
-    chatId: string;
-    text: string;
-    files: FileUIPart[];
-    config: AgentConfig;
-  } | null>(null);
+  const [casePickerMode, setCasePickerMode] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   const activeChat = useMemo(
@@ -44,41 +31,41 @@ function AuthenticatedApp({
     [chats, activeChatId]
   );
 
-  // 优先恢复该家庭账号上次打开的聊天；如果已经被删除，就回退到最近一条。
+  // 优先恢复该参与者上次打开的训练；如果已经被删除，就回退到最近一条。
   useEffect(() => {
-    if (!stateReady || draftMode) return;
+    if (!stateReady || casePickerMode) return;
     if (chats.length === 0) {
       setActiveChatId(null);
-      setDraftMode(true);
+      setCasePickerMode(true);
       return;
     }
-    const storageKey = `family-ai:last-chat:${user.login}`;
+    const storageKey = `medical-edu:last-training:${user.login}`;
     const saved = localStorage.getItem(storageKey);
     const next =
       (saved && chats.find((chat) => chat.id === saved)?.id) ?? chats[0].id;
     if (!activeChatId || !chats.some((chat) => chat.id === activeChatId)) {
       setActiveChatId(next);
     }
-  }, [activeChatId, chats, draftMode, stateReady, user.login]);
+  }, [activeChatId, casePickerMode, chats, stateReady, user.login]);
 
   useEffect(() => {
     if (!activeChatId) return;
-    localStorage.setItem(`family-ai:last-chat:${user.login}`, activeChatId);
+    localStorage.setItem(`medical-edu:last-training:${user.login}`, activeChatId);
   }, [activeChatId, user.login]);
 
   const newChat = useCallback(() => {
-    setPendingFirstTurn(null);
     setActiveChatId(null);
-    setDraftMode(true);
+    setCasePickerMode(true);
     setMobileSidebarOpen(false);
   }, []);
 
-  const materializeDraft = useCallback(
-    async (text: string, files: FileUIPart[], config: AgentConfig) => {
+  const startCase = useCallback(
+    async (caseId: string) => {
       await directory.ready;
-      const chat = await createChat({ title: provisionalTitle(text, files) });
-      setPendingFirstTurn({ chatId: chat.id, text, files, config });
-      setDraftMode(false);
+      const medicalCase = getPublicMedicalCase(caseId);
+      if (!medicalCase) throw new Error(`未知病例：${caseId}`);
+      const chat = await createChat({ caseId, title: medicalCase.title });
+      setCasePickerMode(false);
       setActiveChatId(chat.id);
     },
     [createChat, directory]
@@ -89,7 +76,7 @@ function AuthenticatedApp({
       if (activeChatId === chatId) {
         const replacement = chats.find((chat) => chat.id !== chatId);
         setActiveChatId(replacement?.id ?? null);
-        setDraftMode(!replacement);
+        setCasePickerMode(!replacement);
         // Let React unmount the child ChatShell first. Otherwise an open child
         // WebSocket can race deleteSubAgent() and recreate the facet we just
         // deleted.
@@ -110,8 +97,7 @@ function AuthenticatedApp({
     chats,
     activeChatId,
     onSelectChat: (chatId: string) => {
-      setPendingFirstTurn(null);
-      setDraftMode(false);
+      setCasePickerMode(false);
       setActiveChatId(chatId);
     },
     onNewChat: newChat,
@@ -139,17 +125,11 @@ function AuthenticatedApp({
           onOpenSidebar={() => setMobileSidebarOpen(true)}
           onNewChat={newChat}
           onDeleteChat={removeChat}
-          initialTurn={
-            pendingFirstTurn?.chatId === activeChat.id
-              ? pendingFirstTurn
-              : null
-          }
-          onInitialTurnConsumed={() => setPendingFirstTurn(null)}
         />
       ) : (
-        <DraftChatShell
+        <CaseStartShell
           onOpenSidebar={() => setMobileSidebarOpen(true)}
-          onMaterialize={materializeDraft}
+          onStartCase={startCase}
         />
       )}
     </div>
@@ -177,7 +157,7 @@ export function App() {
       <main className="flex min-h-dvh items-center justify-center bg-background">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <LoaderCircleIcon className="size-4 animate-spin" />
-          正在打开 Family AI…
+          正在打开医学临床推理训练…
         </div>
       </main>
     );
