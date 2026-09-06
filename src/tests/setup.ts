@@ -8,7 +8,7 @@ import { exports } from "cloudflare:workers";
 // would otherwise blow the first test's per-test timeout.
 beforeAll(async () => {
   await exports.default.fetch("http://warmup/");
-}, 30_000);
+}, 60_000);
 
 // Give DOs a moment to finish WebSocket close handlers before the
 // module is invalidated between test files.
