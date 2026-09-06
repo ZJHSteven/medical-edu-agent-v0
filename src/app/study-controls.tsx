@@ -150,7 +150,13 @@ export function StudyControls({
         ) : null}
       </div>
 
-      <Dialog open={initialOpen} onOpenChange={setInitialOpen}>
+      <Dialog
+        // 阶段已经由服务端推进后，无论本地 Dialog state 是否因为异步 RPC/热更新
+        // 晚一拍，都不允许继续把“第一次判断”表单留在屏幕上。服务端本身也会
+        // 拒绝第二次提交，这里再把 UI 可见性与权威阶段绑定，避免学生误以为可改。
+        open={initialOpen && state.stage === "history"}
+        onOpenChange={setInitialOpen}
+      >
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>提交第一次临床判断</DialogTitle>
@@ -231,7 +237,11 @@ export function StudyControls({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={finalOpen} onOpenChange={setFinalOpen}>
+      <Dialog
+        // 最终提交同理：一旦状态变成 completed，立即从 UI 上收起表单。
+        open={finalOpen && state.stage === "reflection"}
+        onOpenChange={setFinalOpen}
+      >
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>最终判断与学习反思</DialogTitle>

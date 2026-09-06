@@ -101,7 +101,13 @@ export const MessageAction = ({
     return (
       <TooltipProvider>
         <Tooltip>
-          <TooltipTrigger>{button}</TooltipTrigger>
+          {/*
+           * Base UI 的 Trigger 默认自己渲染 <button>。若把我们的 shadcn Button
+           * 作为 children 塞进去，会生成 button > button，React 会报警并可能
+           * 造成 hydration/点击异常。`render` 让 Trigger 复用现成 Button 作为
+           * 唯一 DOM 触发器，这也是本项目其他 Base UI Trigger 的统一写法。
+           */}
+          <TooltipTrigger render={button} />
           <TooltipContent>
             <p>{tooltip}</p>
           </TooltipContent>

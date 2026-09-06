@@ -36,6 +36,8 @@
   - [x] 清理 README / 环境模板 / Cookie / Worker 身份，去除 Family AI showcase 语义。
   - [x] 改造部署 smoke，只验证医学 Demo 锁定的 DeepSeek V4 Flash 与真实 UIMessageStream framing。
   - [x] 移除医学 Demo 已不使用的远程 Browser binding，避免本地 Vite 强制创建 Cloudflare remote preview session。
+  - [x] 浏览器真实问诊与临床导师阶段已跑通；修复阶段推进后结构化 Dialog 仍可见的问题。
+  - [x] 修复 AI Elements `MessageAction` 的 TooltipTrigger 嵌套 button React 警告。
   - [ ] 本地真实 Provider + 浏览器端到端验收。
   - [ ] 建立远程仓库并部署独立医学 Demo。
 
