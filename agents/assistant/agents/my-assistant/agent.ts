@@ -38,7 +38,10 @@ import type {
   StudyState
 } from "../../../../shared/study";
 import { getMedicalCase, hasMedicalCase } from "../../../medical/cases";
-import { buildStudyInstructions } from "../../../medical/study-prompts";
+import {
+  buildStudyBaseInstructions,
+  buildStudyStageDirective
+} from "../../../medical/study-prompts";
 
 /**
  * 医学教学实验固定底层模型，学生端不能自行切换，避免模型差异成为混杂因素。
@@ -542,7 +545,7 @@ export class MyAssistant extends Think<Env> {
         provider: {
           get: async () => {
             const state = this.getStudyStateInternal();
-            return buildStudyInstructions(state.stage, getMedicalCase(state.caseId));
+            return buildStudyBaseInstructions(getMedicalCase(state.caseId));
           }
         }
       })
@@ -681,7 +684,6 @@ export class MyAssistant extends Think<Env> {
 
   async beforeTurn(ctx: TurnContext): Promise<TurnConfig | void> {
     const state = this.getStudyStateInternal();
-    const medicalCase = getMedicalCase(state.caseId);
     const resolved = resolveFamilyModel(this.env, STUDY_MODEL_CONFIG);
 
     // continuation=true 通常表示同一 turn 在工具结果后继续生成。研究日志只在
@@ -716,7 +718,10 @@ export class MyAssistant extends Think<Env> {
         state.stage === "evidence"
           ? ["search_medical_evidence", "read_medical_evidence"]
           : [],
-      instructions: buildStudyInstructions(state.stage, medicalCase),
+      // 保留 Session.withCachedPrompt() 冻结的稳定病例/多角色前缀，只在末尾追加
+      // 很短的当前阶段角色指令。DeepSeek 的自动上下文缓存按公共前缀命中；这种
+      // 结构避免了旧实现每切一次角色就从 system 的第一个 token 开始完全变化。
+      instructions: `${ctx.system}\n\n${buildStudyStageDirective(state.stage)}`,
       // 隐藏模型内部 reasoning，避免额外信息影响学生的学习过程。
       sendReasoning: false,
       // Sub2API 会用显式会话信号做 sticky scheduling。让 session/thread/cache

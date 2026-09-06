@@ -85,8 +85,20 @@ function stagePlaceholder(stage: StudyStage) {
 
 const INTERNAL_HANDOFF_PREFIX = "[[MEDICAL_EDU_HANDOFF:";
 
+type MedicalMessageMetadata = {
+  medicalEdu?: {
+    kind?: "handoff";
+    targetStage?: StudyStage;
+  };
+};
+
+function messageMetadata(message: UIMessage) {
+  return (message.metadata ?? {}) as MedicalMessageMetadata;
+}
+
 function isInternalHandoffMessage(message: UIMessage) {
   if (message.role !== "user") return false;
+  if (messageMetadata(message).medicalEdu?.kind === "handoff") return true;
   const text = messageText(message).trim();
   return (
     text.startsWith(INTERNAL_HANDOFF_PREFIX) ||
@@ -99,6 +111,8 @@ function isInternalHandoffMessage(message: UIMessage) {
 
 function handoffTarget(message: UIMessage): StudyStage | null {
   if (message.role !== "user") return null;
+  const metadataTarget = messageMetadata(message).medicalEdu?.targetStage;
+  if (metadataTarget) return metadataTarget;
   const text = messageText(message).trim();
 
   if (
@@ -168,6 +182,10 @@ export function MedicalChatShell({
   >("connecting");
   const [studyState, setStudyState] = useState<StudyState | null>(null);
   const [studyError, setStudyError] = useState<string | null>(null);
+  const [localStageBoundary, setLocalStageBoundary] = useState<{
+    stage: StudyStage;
+    startIndex: number;
+  } | null>(null);
 
   const agent = useAgent({
     agent: "AssistantDirectory",
@@ -209,13 +227,27 @@ export function MedicalChatShell({
     void refreshStudyState();
   }, [connectionStatus, chat.id, refreshStudyState]);
 
+  useEffect(() => {
+    setLocalStageBoundary(null);
+  }, [chat.id]);
+
   const sendText = useCallback(
-    (text: string) => {
+    (text: string, handoffTargetStage?: StudyStage) => {
       if (isStreaming || !text.trim()) return;
       clearError();
       setDraft("");
       sendMessage({
         role: "user",
+        ...(handoffTargetStage
+          ? {
+              metadata: {
+                medicalEdu: {
+                  kind: "handoff" as const,
+                  targetStage: handoffTargetStage
+                }
+              }
+            }
+          : {}),
         parts: [{ type: "text", text: text.trim() }]
       });
     },
@@ -228,6 +260,7 @@ export function MedicalChatShell({
       const state = (await agent.call("submitInitialAssessment", [
         assessment
       ])) as StudyState;
+      setLocalStageBoundary({ stage: state.stage, startIndex: messages.length });
       setStudyState(state);
       sendText(
         `[[MEDICAL_EDU_HANDOFF:clinical_feedback]]\n` +
@@ -235,29 +268,34 @@ export function MedicalChatShell({
           `鉴别诊断：${assessment.differentials}\n` +
           `推理依据：${assessment.reasoning}\n` +
           `当前把握度：${assessment.confidence}%\n\n` +
-          "请作为临床导师针对我的推理过程给予反馈，不要直接替我完成最终答案。"
+          "请作为临床导师针对我的推理过程给予反馈，不要直接替我完成最终答案。",
+        state.stage
       );
     },
-    [agent, isStreaming, sendText]
+    [agent, isStreaming, messages.length, sendText]
   );
 
   const advanceEvidence = useCallback(async () => {
     if (isStreaming) return;
     const state = (await agent.call("advanceToEvidence", [])) as StudyState;
+    setLocalStageBoundary({ stage: state.stage, startIndex: messages.length });
     setStudyState(state);
     sendText(
-      "[[MEDICAL_EDU_HANDOFF:evidence]]\n我准备进入循证拓展阶段。请作为科研导师，根据当前病例和前面的推理，帮助我把关键不确定性转化成可检索的循证问题，并检索真实文献证据。"
+      "[[MEDICAL_EDU_HANDOFF:evidence]]\n我准备进入循证拓展阶段。请作为科研导师，根据当前病例和前面的推理，帮助我把关键不确定性转化成可检索的循证问题，并检索真实文献证据。",
+      state.stage
     );
-  }, [agent, isStreaming, sendText]);
+  }, [agent, isStreaming, messages.length, sendText]);
 
   const advanceReflection = useCallback(async () => {
     if (isStreaming) return;
     const state = (await agent.call("advanceToReflection", [])) as StudyState;
+    setLocalStageBoundary({ stage: state.stage, startIndex: messages.length });
     setStudyState(state);
     sendText(
-      "[[MEDICAL_EDU_HANDOFF:reflection]]\n我已经完成本轮循证拓展。请帮助我比较最初判断、临床反馈和检索到的证据，提示我应该重点反思哪些变化，但不要替我写最终反思。"
+      "[[MEDICAL_EDU_HANDOFF:reflection]]\n我已经完成本轮循证拓展。请帮助我比较最初判断、临床反馈和检索到的证据，提示我应该重点反思哪些变化，但不要替我写最终反思。",
+      state.stage
     );
-  }, [agent, isStreaming, sendText]);
+  }, [agent, isStreaming, messages.length, sendText]);
 
   const submitFinal = useCallback(
     async (reflection: FinalReflection) => {
@@ -265,9 +303,16 @@ export function MedicalChatShell({
       const state = (await agent.call("submitFinalReflection", [
         reflection
       ])) as StudyState;
+      setLocalStageBoundary({ stage: state.stage, startIndex: messages.length });
       setStudyState(state);
       sendMessage({
         role: "user",
+        metadata: {
+          medicalEdu: {
+            kind: "handoff",
+            targetStage: state.stage
+          }
+        },
         parts: [
           {
             type: "text",
@@ -283,7 +328,7 @@ export function MedicalChatShell({
         ]
       });
     },
-    [agent, isStreaming, sendMessage]
+    [agent, isStreaming, messages.length, sendMessage]
   );
 
   const visibleMessages = useMemo(() => {
@@ -299,10 +344,23 @@ export function MedicalChatShell({
       }
     }
 
+    if (
+      boundaryIndex < 0 &&
+      localStageBoundary?.stage === studyState.stage
+    ) {
+      return messages
+        .slice(localStageBoundary.startIndex)
+        .filter((message) => !isInternalHandoffMessage(message));
+    }
+
+    // 非 history 阶段如果还没看到持久化 handoff 边界，宁可先显示空的新 Agent
+    // 会话，也不要瞬间回退成完整历史；新消息到达后会由 metadata 精确恢复边界。
+    if (boundaryIndex < 0) return [];
+
     return messages
       .slice(boundaryIndex + 1)
       .filter((message) => !isInternalHandoffMessage(message));
-  }, [messages, studyState]);
+  }, [localStageBoundary, messages, studyState]);
 
   const lastAssistantId = useMemo(
     () =>
