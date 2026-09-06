@@ -8,7 +8,7 @@
     "start": "vite dev",
     "predeploy": "npm run test && npm run types && npm run smoke:providers",
     "deploy": "vite build && wrangler deploy",
-    "smoke:providers": "node --env-file-if-exists=.env.local scripts/provider-smoke.mjs",
+    "smoke:providers": "node --env-file-if-exists=.env.local scripts/medical-smoke.mjs",
     "test": "vitest --run --config src/tests/vitest.config.ts",
     "types": "wrangler types env.d.ts --include-runtime false"
   },

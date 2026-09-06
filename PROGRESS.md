@@ -34,7 +34,7 @@
 - 下一步：
   - [x] 改造 `MyAssistant` 与前端病例流程。
   - [x] 清理 README / 环境模板 / Cookie / Worker 身份，去除 Family AI showcase 语义。
-  - [ ] 改造部署 smoke，只验证医学 Demo 锁定的实验模型。
+  - [x] 改造部署 smoke，只验证医学 Demo 锁定的 DeepSeek V4 Flash 与真实 UIMessageStream framing。
   - [ ] 本地真实 Provider + 浏览器端到端验收。
   - [ ] 建立远程仓库并部署独立医学 Demo。
 
