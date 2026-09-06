@@ -35,7 +35,7 @@
 - `study_events`：用户消息、Agent 回复、工具调用、文献检索、阶段变化、结构化提交等时间序列事件。
 - `usage_ledger`：模型输入、缓存输入、输出、reasoning token 和估算成本。
 
-`MyAssistant.exportStudyData()` 可导出单次训练的结构化 JSON。教师端批量导出页面仍在后续计划中。
+`MyAssistant.exportStudyData()` 可导出单次训练的结构化 JSON。病例完成后，页面会直接显示“初始判断 → 最终判断”的最小推理轨迹摘要，并提供研究 JSON 下载入口；真正跨学生、跨病例的教师端批量汇总与评分 Dashboard 仍在后续计划中。
 
 ## 本地运行
 

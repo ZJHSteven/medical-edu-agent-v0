@@ -17,6 +17,7 @@ import { useAgent } from "agents/react";
 import type { UIMessage } from "ai";
 import {
   BookOpenCheckIcon,
+  DownloadIcon,
   GraduationCapIcon,
   MenuIcon,
   MoreHorizontalIcon,
@@ -38,6 +39,7 @@ import type {
 import { ChatMessageView } from "./message-view";
 import { StudyComposer } from "./study-composer";
 import { StudyControls } from "./study-controls";
+import { StudyTraceSummary } from "./study-trace-summary";
 
 type MedicalChatShellProps = {
   chat: ChatSummary;
@@ -182,6 +184,7 @@ export function MedicalChatShell({
   >("connecting");
   const [studyState, setStudyState] = useState<StudyState | null>(null);
   const [studyError, setStudyError] = useState<string | null>(null);
+  const [exportingStudyData, setExportingStudyData] = useState(false);
   const [localStageBoundary, setLocalStageBoundary] = useState<{
     stage: StudyStage;
     startIndex: number;
@@ -221,6 +224,29 @@ export function MedicalChatShell({
       throw reason;
     }
   }, [agent]);
+
+  const exportStudyData = useCallback(async () => {
+    setExportingStudyData(true);
+    setStudyError(null);
+    try {
+      const exported = await agent.call("exportStudyData", []);
+      const blob = new Blob([JSON.stringify(exported, null, 2)], {
+        type: "application/json;charset=utf-8"
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `medical-study-${chat.id}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (reason) {
+      setStudyError(reason instanceof Error ? reason.message : "研究数据导出失败");
+    } finally {
+      setExportingStudyData(false);
+    }
+  }, [agent, chat.id]);
 
   useEffect(() => {
     if (connectionStatus !== "connected") return;
@@ -453,6 +479,10 @@ export function MedicalChatShell({
                 <Share2Icon />
                 分享本次对话
               </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void exportStudyData()}>
+                <DownloadIcon />
+                导出研究数据
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 variant="destructive"
@@ -491,6 +521,11 @@ export function MedicalChatShell({
               </div>
             </div>
           </div>
+          <StudyTraceSummary
+            state={studyState}
+            onExport={exportStudyData}
+            exporting={exportingStudyData}
+          />
         </>
       ) : null}
 
