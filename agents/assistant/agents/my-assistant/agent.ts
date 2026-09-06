@@ -225,32 +225,43 @@ export class MyAssistant extends Think<Env> {
   }
 
   async beforeTurn(ctx: TurnContext): Promise<TurnConfig | void> {
-    // Splice the directory's shared MCP tools into this turn. Think
-    // merges `config.tools` additively on top of the base tool set, so
-    // whatever tools we return here join `workspace` / `extensions` /
-    // `execute` / builtins on every turn. The proxy waits for any
-    // in-progress MCP connections to settle (5s default) before
-    // returning, so a chat that just woke up still sees tools from
-    // servers that are mid-handshake.
-    const mcpTools = await this.sharedMcp.getAITools();
-    const resolved = resolveFamilyModel(
-      this.env,
-      this.getConfig<AgentConfig>()
-    );
+    const state = this.getStudyStateInternal();
+    const medicalCase = getMedicalCase(state.caseId);
+    const resolved = resolveFamilyModel(this.env, STUDY_MODEL_CONFIG);
+
+    // continuation=true 通常表示同一 turn 在工具结果后继续生成。研究日志只在
+    // 真正的新用户 turn 上记录一次 user_message，避免工具循环造成重复计数。
+    if (!ctx.continuation) {
+      const latestUserText = [...ctx.messages]
+        .reverse()
+        .map((message) => modelMessageText(message))
+        .find(Boolean);
+      if (latestUserText) {
+        this.appendStudyEvent("user_message", state.stage, {
+          text: latestUserText
+        });
+      }
+    }
 
     console.log(
-      `Turn starting: route=${resolved.route.routeId}, effort=${resolved.reasoningEffort}, ${Object.keys(ctx.tools).length} base tools + ${Object.keys(mcpTools).length} MCP tools, continuation=${ctx.continuation}`
+      `Study turn: case=${state.caseId}, stage=${state.stage}, route=${resolved.route.routeId}, continuation=${ctx.continuation}`
     );
 
     const isCodex = resolved.route.backendProtocol === "codex-subscription";
     // Codex 的默认缓存域与 session 对齐。把 route 加进去是为了在用户切换
     // 分组/模型时主动开启新的缓存域，避免不同后池复用同一 key；切回来时仍能
     // 回到原来的稳定缓存域。
-    const promptCacheKey = `family-ai:${this.name}:${resolved.route.routeId}`;
+    const promptCacheKey = `medical-edu:${this.name}:${resolved.route.routeId}`;
 
     return {
       model: resolved.model,
-      tools: mcpTools,
+      // Think 仍然会在底层组装 Workspace 等内置工具。activeTools 是研究边界：
+      // 非循证阶段一个工具也不允许调用；循证阶段也只开放固定文献检索。
+      activeTools:
+        state.stage === "evidence" ? ["search_medical_evidence"] : [],
+      instructions: buildStudyInstructions(state.stage, medicalCase),
+      // 隐藏模型内部 reasoning，避免额外信息影响学生的学习过程。
+      sendReasoning: false,
       // Sub2API 会用显式会话信号做 sticky scheduling。让 session/thread/cache
       // 三者从同一事实来源派生，避免同一聊天每轮被随机分到不同 Codex 账号，
       // 否则即使 prompt 前缀完全相同也不可能稳定命中缓存。
@@ -293,10 +304,25 @@ export class MyAssistant extends Think<Env> {
   }
 
   beforeToolCall(ctx: ToolCallContext): void {
+    const state = this.getStudyStateInternal();
+    this.appendStudyEvent("tool_call", state.stage, {
+      toolName: ctx.toolName,
+      input: ctx.input
+    });
     console.log(`Tool call: ${ctx.toolName}`, JSON.stringify(ctx.input));
   }
 
   afterToolCall(ctx: ToolCallResultContext): void {
+    const state = this.getStudyStateInternal();
+    this.appendStudyEvent("tool_result", state.stage, {
+      toolName: ctx.toolName,
+      success: ctx.success,
+      durationMs: ctx.durationMs,
+      // 工具返回可能很大，研究日志只保留足够复核的一段快照。
+      output: ctx.success
+        ? JSON.stringify(ctx.output).slice(0, 6000)
+        : String(ctx.error ?? "unknown error").slice(0, 2000)
+    });
     if (ctx.success) {
       const resultSize = JSON.stringify(ctx.output).length;
       console.log(

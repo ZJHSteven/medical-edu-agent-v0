@@ -11,6 +11,8 @@
   - [x] Session system context 已改为按病例阶段动态生成，不再注入家庭助手 persona / memory / knowledge 指令。
   - [x] 通用 Weather/Calculator/Browser/Workspace tool surface 已从医学 Agent 的自定义工具中移除。
   - [x] 新增 Europe PMC `search_medical_evidence` 作为科研导师的真实文献检索工具。
+  - [x] `beforeTurn` 已按服务端阶段强制角色与 activeTools，并关闭学生端 reasoning。
+  - [x] 用户消息、工具调用和工具结果开始写入结构化研究事件日志。
   - [x] 目录层已把每个聊天改成病例训练，持久化 `caseId + stage` 并同步子 Agent 阶段。
 - 正在做：
   - [ ] `MyAssistant` 训练状态、研究日志与阶段推进 RPC。
