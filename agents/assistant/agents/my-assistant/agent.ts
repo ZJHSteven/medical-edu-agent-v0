@@ -98,26 +98,6 @@ export class MyAssistant extends Think<Env> {
   override chatStreamStallTimeoutMs = 180_000;
 
   /**
-   * Opt-in, read-only HTTP fetch. Registers a `fetch_url` tool so the model
-   * can read pages/APIs directly without spinning up the browser. This demo
-   * allows any public URL (`http(s)://**`); a real app should narrow this to
-   * the origins it actually needs. Note that even with a wildcard allowlist,
-   * the fetch tool still refuses private/loopback/`*.internal` targets (SSRF
-   * defense) — that protection is independent of the allowlist.
-   *
-   * Think injects `this.workspace` automatically, so with `spillToWorkspace` a
-   * large or binary response is written into the shared workspace (and shows
-   * up in the file browser) instead of bloating the transcript. The
-   * markdown-first default `Accept` nudges content-negotiating endpoints
-   * toward clean markdown. Per-tenant allowlists would build this in
-   * `getTools()` instead; a static list is fine here.
-   */
-  fetchTools = {
-    allowlist: ["https://**", "http://**"],
-    spillToWorkspace: true
-  };
-
-  /**
    * Override Think's default per-chat workspace with a proxy into the
    * shared `AssistantDirectory.workspace`. This class field runs in the
    * subclass's synthetic constructor after `super(ctx, env)`, so by the
@@ -141,30 +121,8 @@ export class MyAssistant extends Think<Env> {
     this.parentAgent(AssistantDirectory)
   );
 
-  /**
-   * Proxy to the directory's MCP state. Used by `beforeTurn` below to
-   * splice the user's shared MCP tools into each turn's tool set.
-   *
-   * The child's own `this.mcp` (Think's default) stays around but is
-   * never registered against — it exists solely so Agent runtime
-   * paths that reach for `this.mcp.*` (hibernation restore, OAuth
-   * callback routing, broadcast plumbing) don't need to care about
-   * the parallel-field arrangement. Those paths all resolve to an
-   * empty, idle MCP client.
-   *
-   * OAuth callbacks (`/chat/mcp-callback`) are routed to the parent
-   * directory by the Worker, never to a child, so child-side
-   * `isCallbackRequest` in Think reliably returns false here.
-   */
-  sharedMcp = new SharedMCPClient(() => this.parentAgent(AssistantDirectory));
-
   getModel() {
-    // Think 要求有一个默认 LanguageModel。真正每轮使用哪个供应商/分组/模型，
-    // 还会在 beforeTurn() 再解析一次并显式覆盖，确保 UI 切换后下一轮立即生效。
-    return resolveFamilyModel(
-      this.env,
-      this.getConfig<AgentConfig>()
-    ).model;
+    return resolveFamilyModel(this.env, STUDY_MODEL_CONFIG).model;
   }
 
   // Recover from a turn that overflows the context window mid-flight: compaction
@@ -183,14 +141,6 @@ export class MyAssistant extends Think<Env> {
   // covers the common providers; assign it directly, or wrap it to add your own
   // categories.
   override classifyChatError = defaultContextOverflowClassifier;
-
-  // Bundled Agent Skills colocated under `./skills` (resolved through the
-  // `agents:skills` specifier). The model advertises the skill catalog in
-  // its prompt and activates a skill on demand via `activate_skill` rather
-  // than carrying every instruction in every turn.
-  getSkills() {
-    return [bundledSkills];
-  }
 
   configureSession(session: Session) {
     const persona =
