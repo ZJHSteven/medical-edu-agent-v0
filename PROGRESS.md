@@ -40,6 +40,7 @@
   - [x] 修复 AI Elements `MessageAction` 的 TooltipTrigger 嵌套 button React 警告。
   - [x] 完整病例闭环已用真实 DeepSeek + Europe PMC 跑到 completed，并验证刷新后状态、聊天和工具痕迹持久化恢复。
   - [x] 循证阶段增加“提示词收敛 + 最多 4 次真实 Europe PMC 请求”的硬预算，并将 evidence turn 限为最多 4 个模型 step。
+  - [x] 定位 Base UI Dialog 关闭后 Portal 偶发不卸载：closed Popup 已带 `data-closed`，但退出动画未结束；为 Popup/Backdrop 增加 `data-closed:hidden` 语义兜底，避免旧表单遮挡后续阶段。
   - [ ] 本地真实 Provider + 浏览器端到端验收。
   - [ ] 建立远程仓库并部署独立医学 Demo。
 
