@@ -4,8 +4,8 @@ import { getPublicMedicalCase } from "../../shared/medical-cases";
 import { fetchCurrentUser, signOut, type AuthUser } from "../auth-client";
 import { useChats } from "../use-chats";
 import { CaseStartShell } from "./case-start-shell";
-import { ChatShell } from "./chat-shell";
 import { LoginScreen } from "./login-screen";
+import { MedicalChatShell } from "./medical-chat-shell";
 import { DesktopSidebar, MobileSidebar } from "./sidebar";
 
 function AuthenticatedApp({
@@ -119,7 +119,7 @@ function AuthenticatedApp({
           正在恢复聊天…
         </main>
       ) : activeChat ? (
-        <ChatShell
+        <MedicalChatShell
           key={activeChat.id}
           chat={activeChat}
           onOpenSidebar={() => setMobileSidebarOpen(true)}
