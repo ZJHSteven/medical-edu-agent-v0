@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  "name": "family-ai",
+  "name": "medical-edu-agent-demo",
 
   // Browser Run 继续作为可选网页读取能力。Free 计划有日额度，
   // 因而不会拿它替代普通 Web Search，只在渲染页面/抽取结构时使用。

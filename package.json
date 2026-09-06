@@ -1,6 +1,6 @@
 {
-  "name": "family-agent-v0",
-  "description": "Family AI V0 built with Cloudflare Think and AI Elements",
+  "name": "medical-edu-agent-v0",
+  "description": "Medical education multi-agent clinical reasoning demo built with Cloudflare Think and AI Elements",
   "private": true,
   "type": "module",
   "version": "0.0.0",

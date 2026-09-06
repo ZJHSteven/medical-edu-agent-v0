@@ -10,7 +10,7 @@ type LoginScreenProps = {
 };
 
 /**
- * 内测期家庭登录页。
+ * 医学教学 Demo 的参与者登录页。
  * 浏览器不保存密码；登录成功后只有 Worker 下发的 HttpOnly 签名 Cookie。
  */
 export function LoginScreen({ onSignedIn }: LoginScreenProps) {
@@ -41,9 +41,9 @@ export function LoginScreen({ onSignedIn }: LoginScreenProps) {
           <div className="mb-2 flex size-11 items-center justify-center rounded-2xl bg-foreground text-background">
             <SparklesIcon className="size-5" />
           </div>
-          <CardTitle className="text-xl">Family AI</CardTitle>
+          <CardTitle className="text-xl">医学临床推理训练</CardTitle>
           <p className="text-sm text-muted-foreground">
-            家庭共享的现代 AI 助手
+            多智能体教学研究 Demo
           </p>
         </CardHeader>
         <CardContent>
@@ -81,7 +81,7 @@ export function LoginScreen({ onSignedIn }: LoginScreenProps) {
               {submitting ? "正在登录…" : "登录"}
             </Button>
             <p className="pt-1 text-center text-[11px] leading-5 text-muted-foreground">
-              当前为家庭内测账号 A / B / C。每个账号拥有独立聊天、文件与 MCP 空间。
+              当前 Demo 使用参与者账号 A / B / C；每个账号的训练记录相互隔离。
             </p>
           </form>
         </CardContent>

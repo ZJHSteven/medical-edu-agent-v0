@@ -1,12 +1,13 @@
 /**
- * Family Agent V0 的轻量账号密码认证。
+ * 医学教育 Demo 的轻量参与者账号认证。
  *
- * 当前只为家庭内测准备 3 个固定账号：A / B / C。
+ * 当前 Demo 先准备 3 个固定参与者账号：A / B / C。
  * 密码按用户要求分别为 AAA / BBB / CCC，但源码里只保存 SHA-256 摘要；
  * 浏览器成功登录后拿到一个 HMAC 签名的 HttpOnly Cookie，之后 Worker 根据
  * Cookie 中的 login 把请求路由到对应的 AssistantDirectory Durable Object。
  *
- * 这不是最终账号系统。未来换成正式家庭账户/Passkey 时，Agent 与 DO 架构无需改。
+ * 这不是正式研究账号系统。真正给学生开放前应改成由教师生成的匿名参与者编号，
+ * 并把研究身份信息与聊天内容分离保存；Agent 与 DO 架构本身无需因此重写。
  */
 
 const SESSION_COOKIE = "family_session";
@@ -33,7 +34,7 @@ type CookieOptions = {
 };
 
 /**
- * 三个测试账号。passwordHash 是 SHA-256(UTF-8 password) 的十六进制值，
+ * 三个 Demo 参与者账号。passwordHash 是 SHA-256(UTF-8 password) 的十六进制值，
  * 避免把 AAA/BBB/CCC 直接暴露在客户端 bundle 或 API 响应中。
  */
 const TEST_USERS: Record<
@@ -43,21 +44,21 @@ const TEST_USERS: Record<
   A: {
     id: 1,
     login: "A",
-    name: "家庭成员 A",
+    name: "参与者 A",
     avatarUrl: "",
     passwordHash: "cb1ad2119d8fafb69566510ee712661f9f14b83385006ef92aec47f523a38358"
   },
   B: {
     id: 2,
     login: "B",
-    name: "家庭成员 B",
+    name: "参与者 B",
     avatarUrl: "",
     passwordHash: "dcdb704109a454784b81229d2b05f368692e758bfa33cb61d04c1b93791b0273"
   },
   C: {
     id: 3,
     login: "C",
-    name: "家庭成员 C",
+    name: "参与者 C",
     avatarUrl: "",
     passwordHash: "8c55ff95a660f37cb05e644e7691e6c66593f453cb2cbaa4d64aa59b40ae8032"
   }
