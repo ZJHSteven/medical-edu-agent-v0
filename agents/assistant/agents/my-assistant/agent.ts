@@ -80,6 +80,21 @@ type EuropePmcResult = {
   pubYear?: string;
 };
 
+const INITIAL_ASSESSMENT_SCHEMA = z.object({
+  primaryDiagnosis: z.string().trim().min(1).max(500),
+  differentials: z.string().trim().min(1).max(3000),
+  reasoning: z.string().trim().min(1).max(5000),
+  confidence: z.number().min(0).max(100)
+});
+
+const FINAL_REFLECTION_SCHEMA = z.object({
+  finalDiagnosis: z.string().trim().min(1).max(500),
+  revisedReasoning: z.string().trim().min(1).max(5000),
+  evidenceImpact: z.string().trim().min(1).max(5000),
+  reflection: z.string().trim().min(1).max(5000),
+  confidence: z.number().min(0).max(100)
+});
+
 // ── MyAssistant — one Think DO per chat (a facet of the directory) ────
 
 export class MyAssistant extends Think<Env> {
@@ -123,6 +138,268 @@ export class MyAssistant extends Think<Env> {
 
   getModel() {
     return resolveFamilyModel(this.env, STUDY_MODEL_CONFIG).model;
+  }
+
+  /**
+   * 建立每个病例训练自己的状态与事件表。
+   *
+   * Think 本身会持久化完整消息；这里额外保存“研究语义事件”，是因为论文分析
+   * 需要稳定字段，而不能以后再从自然语言聊天里猜哪一条是初判、哪一条是反思。
+   */
+  private ensureStudyTables(): void {
+    this.sql`CREATE TABLE IF NOT EXISTS study_state (
+      id INTEGER PRIMARY KEY,
+      case_id TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      initial_assessment_json TEXT,
+      final_reflection_json TEXT
+    )`;
+
+    this.sql`CREATE TABLE IF NOT EXISTS study_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at INTEGER NOT NULL,
+      event_type TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      payload_json TEXT NOT NULL
+    )`;
+  }
+
+  /**
+   * 父 Directory 创建子 Agent 后调用一次。方法故意不加 `@callable()`：
+   * 浏览器没有权限给已经存在的训练重新绑定病例。
+   */
+  async initializeStudy(caseId: string): Promise<StudyState> {
+    if (!hasMedicalCase(caseId)) {
+      throw new Error(`未知医学教学病例：${caseId}`);
+    }
+
+    this.ensureStudyTables();
+    const existing = this.getStudyStateRow();
+    if (existing) {
+      if (existing.case_id !== caseId) {
+        throw new Error("训练会话已经绑定其他病例，不能重新绑定");
+      }
+      return this.rowToStudyState(existing);
+    }
+
+    const now = Date.now();
+    this.sql`INSERT INTO study_state (
+      id, case_id, stage, started_at, updated_at,
+      initial_assessment_json, final_reflection_json
+    ) VALUES (1, ${caseId}, ${"history"}, ${now}, ${now}, NULL, NULL)`;
+
+    this.appendStudyEvent("study_started", "history", { caseId });
+    return this.getStudyStateInternal();
+  }
+
+  private getStudyStateRow() {
+    this.ensureStudyTables();
+    const [row] = this.sql<{
+      case_id: string;
+      stage: StudyStage;
+      started_at: number;
+      updated_at: number;
+      initial_assessment_json: string | null;
+      final_reflection_json: string | null;
+    }>`SELECT
+      case_id,
+      stage,
+      started_at,
+      updated_at,
+      initial_assessment_json,
+      final_reflection_json
+    FROM study_state
+    WHERE id = 1`;
+    return row;
+  }
+
+  private rowToStudyState(row: NonNullable<ReturnType<MyAssistant["getStudyStateRow"]>>): StudyState {
+    return {
+      caseId: row.case_id,
+      stage: row.stage,
+      startedAt: row.started_at,
+      updatedAt: row.updated_at,
+      initialAssessment: row.initial_assessment_json
+        ? (JSON.parse(row.initial_assessment_json) as InitialAssessment)
+        : undefined,
+      finalReflection: row.final_reflection_json
+        ? (JSON.parse(row.final_reflection_json) as FinalReflection)
+        : undefined
+    };
+  }
+
+  /**
+   * 所有模型 turn 都要求会话已经初始化。理论上父 Directory 会先 initialize，
+   * 这里再做一次防御性兜底，避免开发阶段直接访问子路由导致空状态崩溃。
+   */
+  private getStudyStateInternal(): StudyState {
+    this.ensureStudyTables();
+    let row = this.getStudyStateRow();
+    if (!row) {
+      const now = Date.now();
+      this.sql`INSERT INTO study_state (
+        id, case_id, stage, started_at, updated_at,
+        initial_assessment_json, final_reflection_json
+      ) VALUES (1, ${"thyrotoxicosis-001"}, ${"history"}, ${now}, ${now}, NULL, NULL)`;
+      this.appendStudyEvent("study_started_fallback", "history", {
+        caseId: "thyrotoxicosis-001"
+      });
+      row = this.getStudyStateRow();
+    }
+    if (!row) throw new Error("无法初始化医学教学训练状态");
+    return this.rowToStudyState(row);
+  }
+
+  private appendStudyEvent(
+    eventType: string,
+    stage: StudyStage,
+    payload: unknown
+  ): void {
+    this.ensureStudyTables();
+    let payloadJson = "{}";
+    try {
+      payloadJson = JSON.stringify(payload ?? null);
+    } catch {
+      payloadJson = JSON.stringify({ serializationError: true });
+    }
+    this.sql`INSERT INTO study_events (
+      created_at, event_type, stage, payload_json
+    ) VALUES (${Date.now()}, ${eventType}, ${stage}, ${payloadJson})`;
+  }
+
+  private listStudyEventsInternal(): StudyEvent[] {
+    this.ensureStudyTables();
+    const rows = this.sql<{
+      id: number;
+      created_at: number;
+      event_type: string;
+      stage: StudyStage;
+      payload_json: string;
+    }>`SELECT id, created_at, event_type, stage, payload_json
+       FROM study_events
+       ORDER BY id ASC`;
+
+    return rows.map((row) => {
+      let payload: unknown = null;
+      try {
+        payload = JSON.parse(row.payload_json);
+      } catch {
+        payload = { raw: row.payload_json };
+      }
+      return {
+        id: row.id,
+        createdAt: row.created_at,
+        eventType: row.event_type,
+        stage: row.stage,
+        payload
+      };
+    });
+  }
+
+  private async transitionStudyStage(
+    expected: StudyStage,
+    next: StudyStage,
+    eventType: string,
+    payload: unknown
+  ): Promise<StudyState> {
+    const current = this.getStudyStateInternal();
+    if (current.stage !== expected) {
+      throw new Error(
+        `当前阶段为 ${current.stage}，不能执行要求 ${expected} 的操作`
+      );
+    }
+
+    const now = Date.now();
+    this.sql`UPDATE study_state
+      SET stage = ${next}, updated_at = ${now}
+      WHERE id = 1`;
+    this.appendStudyEvent(eventType, next, payload);
+
+    const directory = await this.parentAgent(AssistantDirectory);
+    await directory.recordStudyStage(this.name, next);
+    return this.getStudyStateInternal();
+  }
+
+  @callable()
+  getStudyState(): StudyState {
+    return this.getStudyStateInternal();
+  }
+
+  @callable()
+  async submitInitialAssessment(input: InitialAssessment): Promise<StudyState> {
+    const assessment = INITIAL_ASSESSMENT_SCHEMA.parse(input);
+    const current = this.getStudyStateInternal();
+    if (current.stage !== "history") {
+      throw new Error("初步判断只能在问诊实践阶段提交一次");
+    }
+
+    const now = Date.now();
+    const payloadJson = JSON.stringify(assessment);
+    this.sql`UPDATE study_state
+      SET stage = ${"clinical_feedback"},
+          updated_at = ${now},
+          initial_assessment_json = ${payloadJson}
+      WHERE id = 1`;
+    this.appendStudyEvent("initial_assessment_submitted", "clinical_feedback", assessment);
+
+    const directory = await this.parentAgent(AssistantDirectory);
+    await directory.recordStudyStage(this.name, "clinical_feedback");
+    return this.getStudyStateInternal();
+  }
+
+  @callable()
+  advanceToEvidence(): Promise<StudyState> {
+    return this.transitionStudyStage(
+      "clinical_feedback",
+      "evidence",
+      "evidence_stage_started",
+      {}
+    );
+  }
+
+  @callable()
+  advanceToReflection(): Promise<StudyState> {
+    return this.transitionStudyStage(
+      "evidence",
+      "reflection",
+      "reflection_stage_started",
+      {}
+    );
+  }
+
+  @callable()
+  async submitFinalReflection(input: FinalReflection): Promise<StudyState> {
+    const reflection = FINAL_REFLECTION_SCHEMA.parse(input);
+    const current = this.getStudyStateInternal();
+    if (current.stage !== "reflection") {
+      throw new Error("最终判断与反思只能在反思修订阶段提交一次");
+    }
+
+    const now = Date.now();
+    const payloadJson = JSON.stringify(reflection);
+    this.sql`UPDATE study_state
+      SET stage = ${"completed"},
+          updated_at = ${now},
+          final_reflection_json = ${payloadJson}
+      WHERE id = 1`;
+    this.appendStudyEvent("final_reflection_submitted", "completed", reflection);
+
+    const directory = await this.parentAgent(AssistantDirectory);
+    await directory.recordStudyStage(this.name, "completed");
+    return this.getStudyStateInternal();
+  }
+
+  @callable()
+  exportStudyData() {
+    return {
+      schemaVersion: 1,
+      exportedAt: Date.now(),
+      chatId: this.name,
+      state: this.getStudyStateInternal(),
+      events: this.listStudyEventsInternal()
+    };
   }
 
   // Recover from a turn that overflows the context window mid-flight: compaction

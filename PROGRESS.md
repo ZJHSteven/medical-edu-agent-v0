@@ -13,6 +13,9 @@
   - [x] 新增 Europe PMC `search_medical_evidence` 作为科研导师的真实文献检索工具。
   - [x] `beforeTurn` 已按服务端阶段强制角色与 activeTools，并关闭学生端 reasoning。
   - [x] 用户消息、工具调用和工具结果开始写入结构化研究事件日志。
+  - [x] 子 Agent SQLite 已增加 `study_state` / `study_events`，状态与研究事件独立于自然语言消息保存。
+  - [x] 增加严格 RPC：提交初判 → 循证 → 反思 → 最终提交；越级调用会被服务端拒绝。
+  - [x] 增加单训练 JSON 导出 RPC，为后续教师端批量导出打基础。
   - [x] 目录层已把每个聊天改成病例训练，持久化 `caseId + stage` 并同步子 Agent 阶段。
 - 正在做：
   - [ ] `MyAssistant` 训练状态、研究日志与阶段推进 RPC。
