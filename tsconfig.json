@@ -1,0 +1,9 @@
+{
+  "extends": "agents/tsconfig",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "exclude": ["src/tests/**/*.ts"]
+}
