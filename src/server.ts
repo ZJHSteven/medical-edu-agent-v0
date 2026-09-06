@@ -1,11 +1,8 @@
 /**
- * Family Agent V0 — Worker 入口。
+ * 医学教育多智能体 Demo — Worker 入口。
  *
- * 这里故意只负责两件事：
- * 1. 家庭账号认证；
- * 2. 把认证用户的 `/chat*` 请求路由到该用户独享的 AssistantDirectory DO。
- *
- * 模型、Memory、Workspace、Tools 等能力都属于 Agent 层，不和 HTTP 认证混写。
+ * HTTP 层只负责参与者认证和 Agent 路由。病例状态、阶段约束、研究日志、模型
+ * 与工具策略全部留在 Agent 层，避免把教学实验规则散落到普通 API 路由中。
  */
 
 import {
@@ -72,9 +69,9 @@ export default {
       }
 
       /**
-       * 用户级隔离的关键点：浏览器永远不能自己指定 Directory 名。
-       * Worker 从签名 Cookie 还原 login，然后才获取 `AssistantDirectory[login]`。
-       * 因而 A/B/C 即使知道别人的聊天 ID，也无法越过这里直连另一个 DO。
+       * 参与者隔离的关键点：浏览器永远不能自己指定 Directory 名。
+       * Worker 从签名 Cookie 还原参与者 login，然后才获取该参与者独享的
+       * `AssistantDirectory[login]`。即使知道别人的训练 ID，也不能跨账号访问。
        */
       if (url.pathname === "/chat" || url.pathname.startsWith("/chat/")) {
         const user = await getAuthenticatedUserFromRequest(request, env);
@@ -96,7 +93,7 @@ export default {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unexpected server error";
-      console.error("[Family Agent] request failed", error);
+      console.error("[Medical Education Agent] request failed", error);
       return createJsonResponse({ error: message }, { status: 500 });
     }
 

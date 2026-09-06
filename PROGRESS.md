@@ -32,8 +32,11 @@
   - [x] 项目包名与 Worker 名称已独立为 `medical-edu-agent-v0` / `medical-edu-agent-demo`，不会覆盖 Family AI。
   - [x] 登录页和测试账号文案改为医学教学参与者语义。
 - 下一步：
-  - [ ] 改造 `MyAssistant` 与前端病例流程。
-  - [ ] 本地测试后部署独立医学 Demo。
+  - [x] 改造 `MyAssistant` 与前端病例流程。
+  - [x] 清理 README / 环境模板 / Cookie / Worker 身份，去除 Family AI showcase 语义。
+  - [ ] 改造部署 smoke，只验证医学 Demo 锁定的实验模型。
+  - [ ] 本地真实 Provider + 浏览器端到端验收。
+  - [ ] 建立远程仓库并部署独立医学 Demo。
 
 ## 关键决策与理由
 - 决策A：第一版继续使用 Think，不切换 OpenAI Agents SDK。（原因：现有会话、SQLite、工具循环和前端链路都已稳定，换底座与教学 Demo 无关。）

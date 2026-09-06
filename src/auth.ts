@@ -10,7 +10,7 @@
  * 并把研究身份信息与聊天内容分离保存；Agent 与 DO 架构本身无需因此重写。
  */
 
-const SESSION_COOKIE = "family_session";
+const SESSION_COOKIE = "medical_edu_session";
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 export type AuthUser = {
