@@ -143,25 +143,14 @@ export class MyAssistant extends Think<Env> {
   override classifyChatError = defaultContextOverflowClassifier;
 
   configureSession(session: Session) {
-    const persona =
-      normalizeAgentConfig(this.getConfig<AgentConfig>()).persona ||
-      "You are a capable family AI assistant. You have OpenAI Responses web search for current information, a persistent shared workspace with sandboxed Bash, stateless browser Quick Actions, fetch_url for known public URLs, persistent memory, searchable context, skills, MCP tools, and approval-gated tools. Prefer provider web search for open-ended current-information questions; use fetch_url or browser tools when the user provides a specific URL or rendered page.";
-
     return session
       .withContext("soul", {
         provider: {
-          get: async () =>
-            `${persona}
-
-Be concise. Prefer short, direct answers over lengthy explanations.
-Use the direct workspace tools for file operations. For reading a known URL or API, prefer the \`fetch_url\` tool — it is a fast, read-only HTTP GET over any public URL, and large responses spill to the workspace. For rendered pages, link discovery, or AI extraction, use the one-shot Quick Action tools — \`browser_markdown\` to read a page, \`browser_extract\` to pull structured data, \`browser_links\` to list links, and \`browser_scrape\` to grab elements.
-When you learn something about the user or their project, save it to memory.`
+          get: async () => {
+            const state = this.getStudyStateInternal();
+            return buildStudyInstructions(state.stage, getMedicalCase(state.caseId));
+          }
         }
-      })
-      .withContext("memory", {
-        description:
-          "Key facts about the user, their preferences, project context, and decisions made during conversation. Update when you learn something that would be useful in future turns.",
-        maxTokens: 2000
       })
       .onCompaction(
         createCompactFunction({
@@ -176,11 +165,6 @@ When you learn something about the user or their project, save it to memory.`
       // Codex remote_compaction_v2 会继续单独探测；在确认其输出能安全映射进
       // Think Session 之前，不把 opaque compaction item 假装成普通文本摘要。
       .compactAfter(230_000)
-      .withContext("knowledge", {
-        description:
-          "Searchable knowledge base. Index useful information with set_context and retrieve it later with search_context.",
-        provider: new AgentSearchProvider(this)
-      })
       .withCachedPrompt();
   }
 

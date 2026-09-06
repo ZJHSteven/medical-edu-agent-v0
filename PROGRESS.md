@@ -8,6 +8,7 @@
   - [x] 明确第一版采用“后端状态机控制角色”的可重复实验路线。
   - [x] 建立前后端共享阶段协议、公开病例目录和 Worker 私有病例库。
   - [x] 建立虚拟患者 / 临床导师 / 科研导师 / 反思阶段的独立提示词生成器。
+  - [x] Session system context 已改为按病例阶段动态生成，不再注入家庭助手 persona / memory / knowledge 指令。
   - [x] 目录层已把每个聊天改成病例训练，持久化 `caseId + stage` 并同步子 Agent 阶段。
 - 正在做：
   - [ ] `MyAssistant` 训练状态、研究日志与阶段推进 RPC。
