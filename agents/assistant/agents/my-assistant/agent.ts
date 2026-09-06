@@ -723,6 +723,10 @@ export class MyAssistant extends Think<Env> {
       // 很短的当前阶段角色指令。DeepSeek 的自动上下文缓存按公共前缀命中；这种
       // 结构避免了旧实现每切一次角色就从 system 的第一个 token 开始完全变化。
       instructions: `${ctx.system}\n\n${buildStudyStageDirective(state.stage)}`,
+      // 完成阶段是结构化学习结算，不再需要开放式发散；低温度能显著降低
+      // “只写一句结束语”或标题结构漂移的概率，同时仍保留同一会话上下文。
+      temperature: state.stage === "completed" ? 0.2 : undefined,
+      maxOutputTokens: state.stage === "completed" ? 2600 : undefined,
       // 隐藏模型内部 reasoning，避免额外信息影响学生的学习过程。
       sendReasoning: false,
       // Sub2API 会用显式会话信号做 sticky scheduling。让 session/thread/cache

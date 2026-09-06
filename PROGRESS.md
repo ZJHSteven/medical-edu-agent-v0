@@ -15,8 +15,9 @@
   - [x] 用户消息、工具调用和工具结果开始写入结构化研究事件日志。
   - [x] 子 Agent SQLite 已增加 `study_state` / `study_events`，状态与研究事件独立于自然语言消息保存。
   - [x] 完成病例后显示最小“临床推理轨迹”卡片，对照学生初判/终判、信心变化、循证影响与反思；聊天菜单支持直接导出单病例结构化研究 JSON。
-  - [x] 完成阶段与前四阶段统一走同一条隐藏 handoff 会话链，不另建总结 Agent；完成页将同一会话的最终 AI 回复渲染为大块 Markdown 总结，并与结构化推理轨迹并列展示。
-  - [x] 反思阶段增加认知偏差复盘字段；完成阶段 AI 总结固定包含 Evidence Ledger、认知偏差复盘、四维 AI 形成性评价和下一步建议，并明确不替代正式教师评分。
+  - [x] 完成阶段与前四阶段统一走同一条隐藏 handoff 会话链，不另建总结 Agent；完成页将同一会话的最终 AI 回复渲染为学习结算，并与结构化推理轨迹并列展示。
+  - [x] 反思阶段增加认知偏差复盘字段；完成阶段固定要求推理轨迹、Evidence Ledger、认知偏差复盘、四维 AI 形成性评价和下一步建议，并明确不替代正式教师评分。
+  - [x] 完成页增加程序化 Evidence Ledger（直接读取真实 Europe PMC 工具结果）、总结完整性检查、一次自动 repair 与手动“重新生成总结”，旧 completed 记录也可按新规则重算。
   - [x] 增加严格 RPC：提交初判 → 循证 → 反思 → 最终提交；越级调用会被服务端拒绝。
   - [x] 增加单训练 JSON 导出 RPC，为后续教师端批量导出打基础。
   - [x] 助手回复也写入研究事件；usage 账本按锁定实验模型计价。
@@ -44,10 +45,14 @@
   - [x] 浏览器真实问诊与临床导师阶段已跑通；修复阶段推进后结构化 Dialog 仍可见的问题。
   - [x] 修复 AI Elements `MessageAction` 的 TooltipTrigger 嵌套 button React 警告。
   - [x] 完整病例闭环已用真实 DeepSeek + Europe PMC 跑到 completed，并验证刷新后状态、聊天和工具痕迹持久化恢复。
-  - [x] 循证阶段增加“提示词收敛 + 最多 4 次真实 Europe PMC 请求”的硬预算，并将 evidence turn 限为最多 4 个模型 step。
+  - [x] 撤销循证检索次数硬上限；Agent 可自由检索/阅读全文，工具执行层最多 3 个 Europe PMC 并发并带排队、jitter 与 429/5xx 指数退避。
+  - [x] Europe PMC 检索升级为 core metadata + abstract，并增加 OA `fullTextXML` 分页全文阅读工具。
   - [x] 定位 Base UI Dialog 关闭后 Portal 偶发不卸载：closed Popup 已带 `data-closed`，但退出动画未结束；为 Popup/Backdrop 增加 `data-closed:hidden` 语义兜底，避免旧表单遮挡后续阶段。
-  - [ ] 本地真实 Provider + 浏览器端到端验收。
-  - [ ] 建立远程仓库并部署独立医学 Demo。
+  - [x] 长对话滚动层修复：在 `StickToBottom.Content` 的真实 scrollRef 上显式启用 `overflow-y-auto`。
+  - [x] 首 token 延迟期间接入 AI Elements `Shimmer`，按当前角色显示“正在思考/分析”，避免 DeepSeek thinking 阶段页面空白。
+  - [x] 从“大二下笔记”恢复 3 个真实 PBL 纵向病例 × 3 幕，共 9 个公开训练单元；Graves 临时病例退为内部 smoke fixture。
+  - [x] 本地真实 Provider + 浏览器端到端验收。
+  - [x] 建立远程仓库并部署独立医学 Demo；Custom Domain 为 `https://mededu.zjhstudio.com`。
 
 ## 关键决策与理由
 - 决策A：第一版继续使用 Think，不切换 OpenAI Agents SDK。（原因：现有会话、SQLite、工具循环和前端链路都已稳定，换底座与教学 Demo 无关。）

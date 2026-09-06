@@ -1,12 +1,28 @@
 import { Button } from "@/components/ui/button";
 import { MessageResponse } from "@/components/ai-elements/message";
+import { Shimmer } from "@/components/ai-elements/shimmer";
 import {
   ArrowRightIcon,
   BrainCircuitIcon,
   DownloadIcon,
+  RefreshCwIcon,
+  SearchIcon,
   SparklesIcon
 } from "lucide-react";
 import type { StudyState } from "../../shared/study";
+
+export type EvidenceLedgerEntry = {
+  kind: "search" | "fulltext";
+  title: string;
+  detail?: string;
+  references?: Array<{
+    title: string;
+    year?: string;
+    pmid?: string;
+    pmcid?: string;
+    doi?: string;
+  }>;
+};
 
 type StudyTraceSummaryProps = {
   state: StudyState;
@@ -14,6 +30,8 @@ type StudyTraceSummaryProps = {
   exporting?: boolean;
   aiSummary?: string;
   summarizing?: boolean;
+  evidenceLedger?: EvidenceLedgerEntry[];
+  onRegenerateSummary?: () => void | Promise<void>;
 };
 
 /**
@@ -28,7 +46,9 @@ export function StudyTraceSummary({
   onExport,
   exporting = false,
   aiSummary,
-  summarizing = false
+  summarizing = false,
+  evidenceLedger = [],
+  onRegenerateSummary
 }: StudyTraceSummaryProps) {
   const initial = state.initialAssessment;
   const final = state.finalReflection;
@@ -137,6 +157,64 @@ export function StudyTraceSummary({
         <div className="rounded-2xl border bg-background p-4 shadow-sm">
           <div className="flex items-start gap-3">
             <div className="flex size-9 shrink-0 items-center justify-center rounded-xl border bg-muted/40">
+              <SearchIcon className="size-4" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold">Evidence Ledger · 系统记录</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                直接来自本轮真实工具调用，不依赖 AI 在总结里回忆或重写；因此即使总结格式漂移，检索与全文阅读轨迹仍然可复核。
+              </div>
+            </div>
+          </div>
+
+          {evidenceLedger.length > 0 ? (
+            <div className="mt-4 grid gap-3">
+              {evidenceLedger.map((entry, index) => (
+                <div
+                  key={`${entry.kind}-${index}-${entry.title}`}
+                  className="rounded-xl border bg-muted/15 p-3"
+                >
+                  <div className="text-xs font-semibold">{entry.title}</div>
+                  {entry.detail ? (
+                    <div className="mt-1 text-xs leading-5 text-muted-foreground">
+                      {entry.detail}
+                    </div>
+                  ) : null}
+                  {entry.references && entry.references.length > 0 ? (
+                    <div className="mt-2 grid gap-2">
+                      {entry.references.map((reference, refIndex) => (
+                        <div
+                          key={`${reference.pmid ?? reference.pmcid ?? reference.doi ?? refIndex}`}
+                          className="rounded-lg border bg-background px-3 py-2 text-xs"
+                        >
+                          <div className="font-medium leading-5">{reference.title}</div>
+                          <div className="mt-1 text-[11px] text-muted-foreground">
+                            {[
+                              reference.year,
+                              reference.pmid ? `PMID ${reference.pmid}` : undefined,
+                              reference.pmcid ? `PMCID ${reference.pmcid}` : undefined,
+                              reference.doi ? `DOI ${reference.doi}` : undefined
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-4 rounded-xl border border-dashed px-3 py-3 text-xs text-muted-foreground">
+              本轮没有持久化到可展示的 Europe PMC 工具结果；旧记录可能产生于 Evidence Ledger 功能上线之前。
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-2xl border bg-background p-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-xl border bg-muted/40">
               <BrainCircuitIcon className="size-4" />
             </div>
             <div className="min-w-0 flex-1">
@@ -150,6 +228,18 @@ export function StudyTraceSummary({
                 包含推理轨迹解释、Evidence Ledger、认知偏差复盘和 4 维形成性评分；评分仅用于学习反馈与演示。
               </div>
             </div>
+            {onRegenerateSummary ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={summarizing}
+                onClick={() => void onRegenerateSummary()}
+              >
+                <RefreshCwIcon className={summarizing ? "animate-spin" : undefined} />
+                {summarizing ? "重新生成中" : "重新生成总结"}
+              </Button>
+            ) : null}
           </div>
 
           <div className="mt-4 rounded-xl border bg-muted/15 p-4">
@@ -158,9 +248,11 @@ export function StudyTraceSummary({
             ) : (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <SparklesIcon className="size-4" />
-                {summarizing
-                  ? "正在基于本轮完整会话生成结构化学习总结…"
-                  : "尚未生成学习总结，可重新进入本病例完成阶段后重试。"}
+                {summarizing ? (
+                  <Shimmer duration={1.2}>正在基于本轮完整会话生成结构化学习总结…</Shimmer>
+                ) : (
+                  "尚未生成学习总结，可重新进入本病例完成阶段后重试。"
+                )}
               </div>
             )}
           </div>

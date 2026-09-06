@@ -4,6 +4,7 @@ import {
   ConversationEmptyState,
   ConversationScrollButton
 } from "@/components/ai-elements/conversation";
+import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -14,7 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAgentChat } from "@cloudflare/think/react";
 import { useAgent } from "agents/react";
-import type { UIMessage } from "ai";
+import { getToolName, isToolUIPart, type UIMessage } from "ai";
 import {
   BookOpenCheckIcon,
   DownloadIcon,
@@ -27,7 +28,7 @@ import {
   Trash2Icon,
   UserRoundIcon
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChatSummary } from "../../agents/assistant/types";
 import { getPublicMedicalCase } from "../../shared/medical-cases";
 import type {
@@ -39,7 +40,10 @@ import type {
 import { ChatMessageView } from "./message-view";
 import { StudyComposer } from "./study-composer";
 import { StudyControls } from "./study-controls";
-import { StudyTraceSummary } from "./study-trace-summary";
+import {
+  StudyTraceSummary,
+  type EvidenceLedgerEntry
+} from "./study-trace-summary";
 
 type MedicalChatShellProps = {
   chat: ChatSummary;
@@ -53,6 +57,69 @@ function messageText(message: UIMessage) {
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("");
+}
+
+function isCompletionSummaryComplete(text: string) {
+  const requiredSections = [
+    /本次推理轨迹/,
+    /Evidence Ledger|证据账本/i,
+    /认知偏差复盘/,
+    /形成性评价/,
+    /下一步建议/
+  ];
+  return requiredSections.every((pattern) => pattern.test(text));
+}
+
+function evidenceLedgerFromMessages(messages: UIMessage[]): EvidenceLedgerEntry[] {
+  const entries: EvidenceLedgerEntry[] = [];
+
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (!isToolUIPart(part) || part.state !== "output-available") continue;
+      if (!("output" in part) || part.output == null) continue;
+
+      const toolName = getToolName(part);
+      const output = part.output as Record<string, unknown>;
+
+      if (toolName === "search_medical_evidence") {
+        const rawResults = Array.isArray(output.results) ? output.results : [];
+        const references = rawResults
+          .slice(0, 5)
+          .map((item) => item as Record<string, unknown>)
+          .map((item) => ({
+            title: String(item.title ?? "未命名文献"),
+            year: item.year ? String(item.year) : undefined,
+            pmid: item.pmid ? String(item.pmid) : undefined,
+            pmcid: item.pmcid ? String(item.pmcid) : undefined,
+            doi: item.doi ? String(item.doi) : undefined
+          }));
+        entries.push({
+          kind: "search",
+          title: `检索：${String(output.query ?? "Europe PMC")}`,
+          detail: `Europe PMC 返回 ${references.length} 条当前保留的候选证据${output.hitCount != null ? `（总命中 ${String(output.hitCount)}）` : ""}。`,
+          references
+        });
+        continue;
+      }
+
+      if (toolName === "read_medical_evidence") {
+        const pmcid = String(output.pmcid ?? "未知 PMCID");
+        const available = output.fullTextAvailable === true;
+        const returnedChars = Number(output.returnedChars ?? 0);
+        const totalChars = Number(output.totalChars ?? 0);
+        const offsetChars = Number(output.offsetChars ?? 0);
+        entries.push({
+          kind: "fulltext",
+          title: `全文阅读：${pmcid}`,
+          detail: available
+            ? `已从 Europe PMC OA 全文读取字符 ${offsetChars.toLocaleString()}–${(offsetChars + returnedChars).toLocaleString()}${totalChars > 0 ? ` / ${totalChars.toLocaleString()}` : ""}。`
+            : String(output.message ?? "Europe PMC 未提供可读取的开放全文。")
+        });
+      }
+    }
+  }
+
+  return entries;
 }
 
 function stageRoleLabel(stage: StudyStage) {
@@ -159,6 +226,31 @@ function stageAgentDescription(stage: StudyStage) {
   }
 }
 
+function stageThinkingLabel(stage: StudyStage) {
+  switch (stage) {
+    case "history":
+      return "虚拟患者正在思考…";
+    case "clinical_feedback":
+      return "临床导师正在分析…";
+    case "evidence":
+      return "科研导师正在思考…";
+    case "reflection":
+      return "临床导师正在整理反馈…";
+    case "completed":
+      return "正在生成学习结算…";
+  }
+}
+
+function assistantMessageHasVisibleContent(message: UIMessage | undefined) {
+  if (!message || message.role !== "assistant") return false;
+  return message.parts.some((part) => {
+    if (part.type === "text" || part.type === "reasoning") {
+      return Boolean(part.text?.trim());
+    }
+    return isToolUIPart(part) || part.type === "source-url" || part.type === "file";
+  });
+}
+
 function StageAgentIcon({ stage }: { stage: StudyStage }) {
   if (stage === "history") return <UserRoundIcon className="size-4" />;
   if (stage === "evidence") return <BookOpenCheckIcon className="size-4" />;
@@ -189,6 +281,7 @@ export function MedicalChatShell({
     stage: StudyStage;
     startIndex: number;
   } | null>(null);
+  const completionSummaryNeedsValidation = useRef(false);
 
   const agent = useAgent({
     agent: "AssistantDirectory",
@@ -331,6 +424,7 @@ export function MedicalChatShell({
       ])) as StudyState;
       setLocalStageBoundary({ stage: state.stage, startIndex: messages.length });
       setStudyState(state);
+      completionSummaryNeedsValidation.current = true;
       // 与前面三个阶段完全使用同一条 handoff 路径：状态推进后，在同一个
       // Think session 中追加隐藏控制消息，让 completed 阶段继续复用已有上下文
       // 与 provider prompt cache。不要为总结再创建第二套 RPC/Agent 交互机制。
@@ -388,6 +482,11 @@ export function MedicalChatShell({
     [visibleMessages]
   );
 
+  const showThinkingPlaceholder = useMemo(() => {
+    if (!isStreaming || studyState?.stage === "completed") return false;
+    return !assistantMessageHasVisibleContent(visibleMessages.at(-1));
+  }, [isStreaming, studyState?.stage, visibleMessages]);
+
   const completedSummaryText = useMemo(() => {
     if (studyState?.stage !== "completed") return "";
     const assistant = [...visibleMessages]
@@ -395,6 +494,43 @@ export function MedicalChatShell({
       .find((message) => message.role === "assistant");
     return assistant ? messageText(assistant) : "";
   }, [studyState?.stage, visibleMessages]);
+
+  const evidenceLedger = useMemo(
+    () => evidenceLedgerFromMessages(messages),
+    [messages]
+  );
+
+  const requestCompletionSummary = useCallback(
+    (validateResult = true) => {
+      if (isStreaming || studyState?.stage !== "completed") return;
+      completionSummaryNeedsValidation.current = validateResult;
+      setLocalStageBoundary({ stage: "completed", startIndex: messages.length });
+      sendText(
+        `[[MEDICAL_EDU_HANDOFF:completed]]\n` +
+          "请重新生成本次第五阶段学习结算。上一版可能缺少规定结构。" +
+          "必须严格包含且仅围绕以下五个二级标题：本次推理轨迹、Evidence Ledger（证据账本）、认知偏差复盘、形成性评价、下一步建议。" +
+          "请使用本会话已经真实发生的问诊、初判、临床反馈、Europe PMC 工具记录和最终反思；不要写开场寒暄或‘本次教学结束’之类的收尾套话。",
+        "completed"
+      );
+    },
+    [isStreaming, messages.length, sendText, studyState?.stage]
+  );
+
+  useEffect(() => {
+    if (!completionSummaryNeedsValidation.current) return;
+    if (studyState?.stage !== "completed" || isStreaming || !completedSummaryText) {
+      return;
+    }
+    if (isCompletionSummaryComplete(completedSummaryText)) {
+      completionSummaryNeedsValidation.current = false;
+      return;
+    }
+
+    // 新完成回合允许一次自动修复；如果第二次仍不完整，不继续自循环，页面上的
+    // “重新生成总结”仍允许用户手动再次请求同一 completed Agent。
+    completionSummaryNeedsValidation.current = false;
+    requestCompletionSummary(false);
+  }, [completedSummaryText, isStreaming, requestCompletionSummary, studyState?.stage]);
 
   const medicalCase = chat.caseId ? getPublicMedicalCase(chat.caseId) : null;
 
@@ -533,6 +669,8 @@ export function MedicalChatShell({
           exporting={exportingStudyData}
           aiSummary={completedSummaryText}
           summarizing={isStreaming}
+          evidenceLedger={evidenceLedger}
+          onRegenerateSummary={() => requestCompletionSummary(true)}
         />
       ) : (
       <>
@@ -575,6 +713,12 @@ export function MedicalChatShell({
               <div className="mt-1 break-words text-xs opacity-80">
                 {error?.message ?? studyError}
               </div>
+            </div>
+          ) : null}
+
+          {showThinkingPlaceholder && studyState ? (
+            <div className="flex min-h-10 items-center px-1 py-1 text-sm text-muted-foreground">
+              <Shimmer duration={1.2}>{stageThinkingLabel(studyState.stage)}</Shimmer>
             </div>
           ) : null}
         </ConversationContent>
