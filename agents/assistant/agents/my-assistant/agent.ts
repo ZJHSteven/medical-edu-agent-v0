@@ -4,12 +4,8 @@ import {
   Session,
   defaultContextOverflowClassifier
 } from "@cloudflare/think";
-import bundledSkills from "agents:skills";
 import type { WorkspaceFsLike } from "@cloudflare/shell";
-import { createWorkspaceTools } from "@cloudflare/think/tools/workspace";
-import { createQuickActionTools } from "@cloudflare/think/tools/browser";
 import { createCompactFunction } from "agents/experimental/memory/utils";
-import { AgentSearchProvider } from "agents/experimental/memory/session";
 import type {
   TurnContext,
   TurnConfig,
@@ -22,7 +18,6 @@ import { tool, generateText } from "ai";
 import type { ToolSet } from "ai";
 import { z } from "zod";
 import { AssistantDirectory } from "../../agent";
-import { SharedMCPClient } from "../../shared-mcp-client";
 import { SharedWorkspace } from "../../shared-workspace";
 import type { AgentConfig, UsageSummary } from "../../types";
 import {
@@ -30,11 +25,60 @@ import {
   resolveFamilyModel
 } from "../../../model-provider";
 import {
+  DEFAULT_MODEL_ROUTE_ID,
   getModelRoute,
   getRoutePricing,
   type ModelRoute
 } from "../../../../shared/model-catalog";
 import type { HeyiweiProviderStatus } from "../../../../src/provider-status";
+import type {
+  FinalReflection,
+  InitialAssessment,
+  StudyEvent,
+  StudyStage,
+  StudyState
+} from "../../../../shared/study";
+import { getMedicalCase, hasMedicalCase } from "../../../medical/cases";
+import { buildStudyInstructions } from "../../../medical/study-prompts";
+
+/**
+ * 医学教学实验固定底层模型，学生端不能自行切换，避免模型差异成为混杂因素。
+ */
+const STUDY_MODEL_CONFIG: AgentConfig = {
+  modelRouteId: DEFAULT_MODEL_ROUTE_ID,
+  reasoningEffort: getModelRoute(DEFAULT_MODEL_ROUTE_ID).defaultReasoningEffort,
+  persona: ""
+};
+
+/** 从 AI SDK 的 ModelMessage 中提取可记录的用户纯文本。 */
+function modelMessageText(message: { role?: string; content?: unknown }): string {
+  if (message.role !== "user") return "";
+  if (typeof message.content === "string") return message.content;
+  if (!Array.isArray(message.content)) return "";
+
+  return message.content
+    .map((part) => {
+      if (typeof part !== "object" || part === null) return "";
+      const value = part as { type?: string; text?: unknown };
+      return value.type === "text" && typeof value.text === "string"
+        ? value.text
+        : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+type EuropePmcResult = {
+  id?: string;
+  source?: string;
+  pmid?: string;
+  pmcid?: string;
+  doi?: string;
+  title?: string;
+  authorString?: string;
+  journalTitle?: string;
+  pubYear?: string;
+};
 
 // ── MyAssistant — one Think DO per chat (a facet of the directory) ────
 
