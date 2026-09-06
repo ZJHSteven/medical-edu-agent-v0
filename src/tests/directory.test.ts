@@ -63,11 +63,15 @@ describe("AssistantDirectory — chat lifecycle", () => {
     expect(found?.className).toBe("MyAssistant");
   });
 
-  it("createChat without an explicit title falls back to a default", async () => {
+  it("createChat without an explicit title uses the bound medical case title", async () => {
     const { directory } = await freshDirectory();
 
     const summary = await directory.createChat();
-    expect(summary.title).toMatch(/^New chat —/);
+    expect(summary).toMatchObject({
+      title: "病例 01：心悸与体重下降",
+      caseId: "thyrotoxicosis-001",
+      stage: "history"
+    });
   });
 
   it("renameChat updates the title without touching the facet", async () => {
