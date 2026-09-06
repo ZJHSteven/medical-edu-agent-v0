@@ -16,12 +16,15 @@ import { useAgentChat } from "@cloudflare/think/react";
 import { useAgent } from "agents/react";
 import type { UIMessage } from "ai";
 import {
+  BookOpenCheckIcon,
+  GraduationCapIcon,
   MenuIcon,
   MoreHorizontalIcon,
   PlusIcon,
   Share2Icon,
   StethoscopeIcon,
-  Trash2Icon
+  Trash2Icon,
+  UserRoundIcon
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChatSummary } from "../../agents/assistant/types";
@@ -78,6 +81,72 @@ function stagePlaceholder(stage: StudyStage) {
     case "completed":
       return "本次训练已完成";
   }
+}
+
+const INTERNAL_HANDOFF_PREFIX = "[[MEDICAL_EDU_HANDOFF:";
+
+function isInternalHandoffMessage(message: UIMessage) {
+  if (message.role !== "user") return false;
+  const text = messageText(message).trim();
+  return (
+    text.startsWith(INTERNAL_HANDOFF_PREFIX) ||
+    text.startsWith("【第一次临床判断】") ||
+    text.startsWith("我准备进入循证拓展阶段。请作为科研导师") ||
+    text.startsWith("我已经完成本轮循证拓展。请帮助我比较") ||
+    text.startsWith("【最终判断与反思】")
+  );
+}
+
+function handoffTarget(message: UIMessage): StudyStage | null {
+  if (message.role !== "user") return null;
+  const text = messageText(message).trim();
+
+  if (
+    text.startsWith("[[MEDICAL_EDU_HANDOFF:clinical_feedback]]") ||
+    text.startsWith("【第一次临床判断】")
+  ) {
+    return "clinical_feedback";
+  }
+  if (
+    text.startsWith("[[MEDICAL_EDU_HANDOFF:evidence]]") ||
+    text.startsWith("我准备进入循证拓展阶段。请作为科研导师")
+  ) {
+    return "evidence";
+  }
+  if (
+    text.startsWith("[[MEDICAL_EDU_HANDOFF:reflection]]") ||
+    text.startsWith("我已经完成本轮循证拓展。请帮助我比较")
+  ) {
+    return "reflection";
+  }
+  if (
+    text.startsWith("[[MEDICAL_EDU_HANDOFF:completed]]") ||
+    text.startsWith("【最终判断与反思】")
+  ) {
+    return "completed";
+  }
+  return null;
+}
+
+function stageAgentDescription(stage: StudyStage) {
+  switch (stage) {
+    case "history":
+      return "独立患者角色 · 仅按问诊披露病例信息";
+    case "clinical_feedback":
+      return "临床教学角色 · 聚焦诊断推理、鉴别诊断与下一步验证";
+    case "evidence":
+      return "科研教学角色 · 可自主检索并阅读 Europe PMC 医学证据";
+    case "reflection":
+      return "临床教学角色 · 对照初判、反馈与证据完成反思修订";
+    case "completed":
+      return "本次训练已完成 · 当前仅显示学习总结";
+  }
+}
+
+function StageAgentIcon({ stage }: { stage: StudyStage }) {
+  if (stage === "history") return <UserRoundIcon className="size-4" />;
+  if (stage === "evidence") return <BookOpenCheckIcon className="size-4" />;
+  return <GraduationCapIcon className="size-4" />;
 }
 
 /**
@@ -161,7 +230,8 @@ export function MedicalChatShell({
       ])) as StudyState;
       setStudyState(state);
       sendText(
-        `【第一次临床判断】\n最可能诊断：${assessment.primaryDiagnosis}\n` +
+        `[[MEDICAL_EDU_HANDOFF:clinical_feedback]]\n` +
+          `【第一次临床判断】\n最可能诊断：${assessment.primaryDiagnosis}\n` +
           `鉴别诊断：${assessment.differentials}\n` +
           `推理依据：${assessment.reasoning}\n` +
           `当前把握度：${assessment.confidence}%\n\n` +
@@ -176,7 +246,7 @@ export function MedicalChatShell({
     const state = (await agent.call("advanceToEvidence", [])) as StudyState;
     setStudyState(state);
     sendText(
-      "我准备进入循证拓展阶段。请作为科研导师，根据当前病例和前面的推理，帮助我把关键不确定性转化成可检索的循证问题，并检索真实文献证据。"
+      "[[MEDICAL_EDU_HANDOFF:evidence]]\n我准备进入循证拓展阶段。请作为科研导师，根据当前病例和前面的推理，帮助我把关键不确定性转化成可检索的循证问题，并检索真实文献证据。"
     );
   }, [agent, isStreaming, sendText]);
 
@@ -185,7 +255,7 @@ export function MedicalChatShell({
     const state = (await agent.call("advanceToReflection", [])) as StudyState;
     setStudyState(state);
     sendText(
-      "我已经完成本轮循证拓展。请帮助我比较最初判断、临床反馈和检索到的证据，提示我应该重点反思哪些变化，但不要替我写最终反思。"
+      "[[MEDICAL_EDU_HANDOFF:reflection]]\n我已经完成本轮循证拓展。请帮助我比较最初判断、临床反馈和检索到的证据，提示我应该重点反思哪些变化，但不要替我写最终反思。"
     );
   }, [agent, isStreaming, sendText]);
 
@@ -202,6 +272,7 @@ export function MedicalChatShell({
           {
             type: "text",
             text:
+              `[[MEDICAL_EDU_HANDOFF:completed]]\n` +
               `【最终判断与反思】\n最终诊断：${reflection.finalDiagnosis}\n` +
               `修订后的推理：${reflection.revisedReasoning}\n` +
               `循证信息的影响：${reflection.evidenceImpact}\n` +
@@ -215,9 +286,30 @@ export function MedicalChatShell({
     [agent, isStreaming, sendMessage]
   );
 
+  const visibleMessages = useMemo(() => {
+    if (!studyState) return messages.filter((message) => !isInternalHandoffMessage(message));
+    if (studyState.stage === "history") {
+      return messages.filter((message) => !isInternalHandoffMessage(message));
+    }
+
+    let boundaryIndex = -1;
+    for (let index = 0; index < messages.length; index += 1) {
+      if (handoffTarget(messages[index]) === studyState.stage) {
+        boundaryIndex = index;
+      }
+    }
+
+    return messages
+      .slice(boundaryIndex + 1)
+      .filter((message) => !isInternalHandoffMessage(message));
+  }, [messages, studyState]);
+
   const lastAssistantId = useMemo(
-    () => [...messages].reverse().find((message) => message.role === "assistant")?.id,
-    [messages]
+    () =>
+      [...visibleMessages]
+        .reverse()
+        .find((message) => message.role === "assistant")?.id,
+    [visibleMessages]
   );
 
   const medicalCase = chat.caseId ? getPublicMedicalCase(chat.caseId) : null;
@@ -317,30 +409,56 @@ export function MedicalChatShell({
       </header>
 
       {studyState ? (
-        <StudyControls
-          state={studyState}
-          disabled={isStreaming || connectionStatus !== "connected"}
-          onSubmitInitial={submitInitial}
-          onAdvanceEvidence={advanceEvidence}
-          onAdvanceReflection={advanceReflection}
-          onSubmitFinal={submitFinal}
-        />
+        <>
+          <StudyControls
+            state={studyState}
+            disabled={isStreaming || connectionStatus !== "connected"}
+            onSubmitInitial={submitInitial}
+            onAdvanceEvidence={advanceEvidence}
+            onAdvanceReflection={advanceReflection}
+            onSubmitFinal={submitFinal}
+          />
+          <div className="border-b border-border/50 bg-muted/25 px-4 py-2.5 sm:px-6">
+            <div className="mx-auto flex w-full max-w-3xl items-center gap-3">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-full border bg-background shadow-sm">
+                <StageAgentIcon stage={studyState.stage} />
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs font-semibold tracking-wide">
+                  {stageRoleLabel(studyState.stage)} 已接管当前会话
+                </div>
+                <div className="truncate text-[11px] text-muted-foreground">
+                  {stageAgentDescription(studyState.stage)}
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
       ) : null}
 
       <Conversation className="min-h-0 flex-1">
-        <ConversationContent className="mx-auto w-full max-w-3xl gap-7 px-4 pb-4 pt-6 sm:px-6">
-          {messages.length === 0 ? (
+        <ConversationContent
+          key={studyState?.stage ?? "loading"}
+          className="mx-auto w-full max-w-3xl gap-7 px-4 pb-4 pt-6 sm:px-6"
+        >
+          {visibleMessages.length === 0 ? (
             <ConversationEmptyState
               icon={<StethoscopeIcon className="size-6" />}
-              title="从问诊开始"
+              title={
+                studyState && studyState.stage !== "history"
+                  ? `${stageRoleLabel(studyState.stage)}正在接管`
+                  : "从问诊开始"
+              }
               description={
-                medicalCase?.opening ??
-                "像面对真实患者一样逐步询问病史；只有你主动问到的信息才会披露。"
+                studyState && studyState.stage !== "history"
+                  ? "前一位智能体的会话已收起。当前智能体会基于完整后端上下文继续工作。"
+                  : medicalCase?.opening ??
+                    "像面对真实患者一样逐步询问病史；只有你主动问到的信息才会披露。"
               }
               className="min-h-[46vh]"
             />
           ) : (
-            messages.map((message) => (
+            visibleMessages.map((message) => (
               <ChatMessageView
                 key={message.id}
                 message={message}
