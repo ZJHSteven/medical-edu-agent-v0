@@ -1,4 +1,5 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { StudyStage } from "../../shared/study";
 
 export interface ChatSummary {
   id: string;
@@ -6,6 +7,10 @@ export interface ChatSummary {
   createdAt: number;
   updatedAt: number;
   lastMessagePreview?: string;
+  /** 医学版中每个聊天就是一次病例训练。 */
+  caseId?: string;
+  /** 侧栏直接展示训练进度，无需逐个唤醒子 Agent。 */
+  stage?: StudyStage;
 }
 
 export interface DirectoryState {
