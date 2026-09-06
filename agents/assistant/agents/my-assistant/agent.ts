@@ -25,7 +25,6 @@ import {
   resolveFamilyModel
 } from "../../../model-provider";
 import {
-  DEFAULT_MODEL_ROUTE_ID,
   getModelRoute,
   getRoutePricing,
   type ModelRoute
@@ -45,8 +44,8 @@ import { buildStudyInstructions } from "../../../medical/study-prompts";
  * 医学教学实验固定底层模型，学生端不能自行切换，避免模型差异成为混杂因素。
  */
 const STUDY_MODEL_CONFIG: AgentConfig = {
-  modelRouteId: DEFAULT_MODEL_ROUTE_ID,
-  reasoningEffort: getModelRoute(DEFAULT_MODEL_ROUTE_ID).defaultReasoningEffort,
+  modelRouteId: "deepseek:official:deepseek-v4-flash",
+  reasoningEffort: "high",
   persona: ""
 };
 
@@ -78,7 +77,50 @@ type EuropePmcResult = {
   authorString?: string;
   journalTitle?: string;
   pubYear?: string;
+  abstractText?: string;
+  isOpenAccess?: string;
+  inEPMC?: string;
+  hasPDF?: string;
+  fullTextUrlList?: {
+    fullTextUrl?: Array<{
+      availability?: string;
+      availabilityCode?: string;
+      documentStyle?: string;
+      site?: string;
+      url?: string;
+    }>;
+  };
 };
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function decodeXmlEntities(text: string): string {
+  return text
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_match, value) =>
+      String.fromCodePoint(Number(value))
+    )
+    .replace(/&#x([0-9a-f]+);/gi, (_match, value) =>
+      String.fromCodePoint(Number.parseInt(value, 16))
+    );
+}
+
+function xmlToPlainText(xml: string): string {
+  const withBreaks = xml
+    .replace(/<\/(?:p|sec|title|abstract|list-item|table-wrap|fig|caption)>/gi, "\n")
+    .replace(/<br\s*\/?\s*>/gi, "\n");
+  return decodeXmlEntities(withBreaks.replace(/<[^>]+>/g, " "))
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n+/g, "\n\n")
+    .trim();
+}
 
 const INITIAL_ASSESSMENT_SCHEMA = z.object({
   primaryDiagnosis: z.string().trim().min(1).max(500),
@@ -111,6 +153,81 @@ export class MyAssistant extends Think<Env> {
   // UI stream chunk 时才判定 stalled，并交给 Think 的 durable recovery。
   // 这样不会再出现供应商连接挂死后无限 spinner，也不会误杀正常几十轮任务。
   override chatStreamStallTimeoutMs = 180_000;
+
+  /**
+   * Europe PMC 外连只在工具执行器层做并发整形，不限制模型可以搜索多少次。
+   * Cloudflare 当前每个 invocation 最多允许 6 条“等待响应头”的外连；这里把
+   * 医学证据工具自己的并发压到 3，给模型流、其他 Worker 子请求留出余量。
+   * 超出并发的调用会进入队列，拿到槽位后再随机等待约 1~2 秒，避免瞬时尖峰。
+   */
+  private evidenceFetchActive = 0;
+  private readonly evidenceFetchWaiters: Array<(queued: boolean) => void> = [];
+
+  private async acquireEvidenceFetchSlot(): Promise<boolean> {
+    if (this.evidenceFetchActive < 3) {
+      this.evidenceFetchActive += 1;
+      return false;
+    }
+
+    return new Promise<boolean>((resolve) => {
+      this.evidenceFetchWaiters.push(resolve);
+    });
+  }
+
+  private releaseEvidenceFetchSlot(): void {
+    const next = this.evidenceFetchWaiters.shift();
+    if (next) {
+      // 槽位直接转交给队首 waiter，active 数量保持不变。
+      next(true);
+      return;
+    }
+    this.evidenceFetchActive = Math.max(0, this.evidenceFetchActive - 1);
+  }
+
+  private async withEvidenceFetchSlot<T>(fn: () => Promise<T>): Promise<T> {
+    const queued = await this.acquireEvidenceFetchSlot();
+    if (queued) {
+      await sleep(1000 + Math.floor(Math.random() * 1000));
+    }
+    try {
+      return await fn();
+    } finally {
+      this.releaseEvidenceFetchSlot();
+    }
+  }
+
+  private async fetchEuropePmc(url: URL, accept: string): Promise<Response> {
+    const maxAttempts = 4;
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        const response = await this.withEvidenceFetchSlot(() =>
+          fetch(url, { headers: { Accept: accept } })
+        );
+
+        if (response.ok) return response;
+
+        const retryable = response.status === 429 || response.status >= 500;
+        if (!retryable || attempt === maxAttempts - 1) return response;
+
+        response.body?.cancel();
+        const retryAfter = Number(response.headers.get("Retry-After"));
+        const backoffMs = Number.isFinite(retryAfter) && retryAfter > 0
+          ? retryAfter * 1000
+          : 750 * 2 ** attempt + Math.floor(Math.random() * 500);
+        await sleep(backoffMs);
+      } catch (error) {
+        lastError = error;
+        if (attempt === maxAttempts - 1) throw error;
+        await sleep(750 * 2 ** attempt + Math.floor(Math.random() * 500));
+      }
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("Europe PMC 请求失败");
+  }
 
   /**
    * Override Think's default per-chat workspace with a proxy into the
@@ -448,50 +565,26 @@ export class MyAssistant extends Think<Env> {
   getTools(): ToolSet {
     return {
       /**
-       * 第一版只保留一个可审计的真实医学文献检索工具。
-       * Europe PMC 的 REST API 不需要额外密钥，返回 PMID/PMCID/DOI 等可核验
-       * 标识，适合 Demo 和后续研究数据审计；正式实验再根据老师要求补指南库。
+       * Europe PMC 检索：返回 core metadata + 摘要 + OA 全文可用性。
+       * 模型可以自由搜索任意次数；并发/退避由 fetchEuropePmc() 在执行层控制。
        */
       search_medical_evidence: tool({
         description:
-          "Search real biomedical literature in Europe PMC. Only use during the evidence stage.",
+          "Search real biomedical literature in Europe PMC. Returns metadata, abstracts, identifiers, and whether open-access full text can be read with read_medical_evidence.",
         inputSchema: z.object({
           query: z.string().min(2).describe("Biomedical literature query in English"),
           limit: z.number().int().min(1).max(8).default(5)
         }),
         execute: async ({ query, limit }) => {
-          /**
-           * 课堂实验不能让模型因为“再搜一篇也许更好”无限扩张检索成本。
-           * `beforeToolCall` 会在 execute 前把本次调用写入 study_events，因此这里
-           * 统计当前循证阶段已经发起的 tool_call；前 4 次允许真实访问，第 5 次
-           * 起只返回明确的预算耗尽信号，不再向 Europe PMC 发网络请求。
-           *
-           * 当前循证阶段只开放这一个工具，所以无需再按 toolName 解析 JSON。
-           * 将来若增加指南库/药典工具，再把预算改成独立的 tool_name 列即可。
-           */
-          const [budget] = this.sql<{ count: number }>`SELECT COUNT(*) AS count
-            FROM study_events
-            WHERE event_type = ${"tool_call"} AND stage = ${"evidence"}`;
-          const callCount = budget?.count ?? 0;
-          if (callCount > 4) {
-            return {
-              budgetExhausted: true,
-              message:
-                "本病例循证阶段的 4 次真实检索预算已用尽。请停止继续检索，基于已有结果进行综合，并如实说明证据缺口。"
-            };
-          }
-
           const url = new URL(
             "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
           );
           url.searchParams.set("query", query);
           url.searchParams.set("format", "json");
-          url.searchParams.set("resultType", "lite");
+          url.searchParams.set("resultType", "core");
           url.searchParams.set("pageSize", String(limit));
 
-          const response = await fetch(url, {
-            headers: { Accept: "application/json" }
-          });
+          const response = await this.fetchEuropePmc(url, "application/json");
           if (!response.ok) {
             throw new Error(`Europe PMC 检索失败：HTTP ${response.status}`);
           }
@@ -508,6 +601,21 @@ export class MyAssistant extends Think<Env> {
             pmid: item.pmid ?? (item.source === "MED" ? item.id : undefined),
             pmcid: item.pmcid,
             doi: item.doi,
+            abstract: item.abstractText
+              ? xmlToPlainText(item.abstractText)
+              : undefined,
+            isOpenAccess: item.isOpenAccess === "Y",
+            fullTextAvailable:
+              item.isOpenAccess === "Y" &&
+              item.inEPMC === "Y" &&
+              Boolean(item.pmcid),
+            fullTextUrls: item.fullTextUrlList?.fullTextUrl
+              ?.filter((entry) => entry.availabilityCode === "OA")
+              .map((entry) => ({
+                style: entry.documentStyle,
+                site: entry.site,
+                url: entry.url
+              })),
             source: item.source,
             id: item.id
           }));
@@ -516,6 +624,55 @@ export class MyAssistant extends Think<Env> {
             query,
             hitCount: payload.hitCount ?? null,
             results
+          };
+        }
+      }),
+
+      /**
+       * 对 Europe PMC Open Access subset 读取 JATS/XML 全文。
+       * 通过 offsetChars 分页，模型可以真正读完整论文，而不是只看摘要；若文章
+       * 不属于可开放全文集合，则明确返回 unavailable，不伪装成“读过全文”。
+       */
+      read_medical_evidence: tool({
+        description:
+          "Read open-access full text from Europe PMC by PMCID. Use after search_medical_evidence when fullTextAvailable is true. Supports paging through the entire article.",
+        inputSchema: z.object({
+          pmcid: z.string().regex(/^PMC\d+$/i),
+          offsetChars: z.number().int().min(0).default(0),
+          maxChars: z.number().int().min(1000).max(30000).default(12000)
+        }),
+        execute: async ({ pmcid, offsetChars, maxChars }) => {
+          const normalizedPmcid = pmcid.toUpperCase();
+          const url = new URL(
+            `https://www.ebi.ac.uk/europepmc/webservices/rest/${normalizedPmcid}/fullTextXML`
+          );
+          const response = await this.fetchEuropePmc(url, "application/xml,text/xml");
+
+          if (response.status === 404) {
+            response.body?.cancel();
+            return {
+              pmcid: normalizedPmcid,
+              fullTextAvailable: false,
+              message:
+                "Europe PMC 没有为该文献提供可通过 fullTextXML 读取的开放全文；请仅依据检索返回的摘要/元数据，并明确说明未读取全文。"
+            };
+          }
+          if (!response.ok) {
+            throw new Error(`Europe PMC 全文读取失败：HTTP ${response.status}`);
+          }
+
+          const xml = await response.text();
+          const fullText = xmlToPlainText(xml);
+          const end = Math.min(fullText.length, offsetChars + maxChars);
+          return {
+            pmcid: normalizedPmcid,
+            fullTextAvailable: true,
+            offsetChars,
+            returnedChars: Math.max(0, end - offsetChars),
+            totalChars: fullText.length,
+            complete: end >= fullText.length,
+            nextOffsetChars: end < fullText.length ? end : null,
+            text: fullText.slice(offsetChars, end)
           };
         }
       })
@@ -554,14 +711,12 @@ export class MyAssistant extends Think<Env> {
     return {
       model: resolved.model,
       // Think 仍然会在底层组装 Workspace 等内置工具。activeTools 是研究边界：
-      // 非循证阶段一个工具也不允许调用；循证阶段也只开放固定文献检索。
+      // 非循证阶段一个工具也不允许调用；循证阶段开放检索 + OA 全文阅读。
       activeTools:
-        state.stage === "evidence" ? ["search_medical_evidence"] : [],
+        state.stage === "evidence"
+          ? ["search_medical_evidence", "read_medical_evidence"]
+          : [],
       instructions: buildStudyInstructions(state.stage, medicalCase),
-      // 循证阶段允许“提出问题 → 工具 → 综合”的少量循环，但没有必要像通用
-      // Agent 那样无限 tool loop。配合工具本身的 4 次真实检索硬预算，最多四个
-      // 模型 step 足够完成一次课堂循证任务，也能避免模型在失败查询上反复试探。
-      maxSteps: state.stage === "evidence" ? 4 : 3,
       // 隐藏模型内部 reasoning，避免额外信息影响学生的学习过程。
       sendReasoning: false,
       // Sub2API 会用显式会话信号做 sticky scheduling。让 session/thread/cache
