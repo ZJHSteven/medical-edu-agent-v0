@@ -641,8 +641,7 @@ export class MyAssistant extends Think<Env> {
   async onStepFinish(ctx: StepContext): Promise<void> {
     if (!ctx.usage) return;
 
-    const config = normalizeAgentConfig(this.getConfig<AgentConfig>());
-    const route = getModelRoute(config.modelRouteId);
+    const route = getModelRoute(STUDY_MODEL_CONFIG.modelRouteId);
     const liveMultiplier = await this.getLiveBillingMultiplier(route);
     const pricing = getRoutePricing(route, new Date(), liveMultiplier);
 
@@ -705,11 +704,18 @@ export class MyAssistant extends Think<Env> {
 
     // Update the sidebar preview on the parent directory. Best-effort —
     // the chat should still function if the RPC fails.
-    const preview = result.message.parts
+    const fullText = result.message.parts
       .filter((p): p is { type: "text"; text: string } => p.type === "text")
       .map((p) => p.text)
-      .join("")
-      .slice(0, 120);
+      .join("");
+    const preview = fullText.slice(0, 120);
+    if (fullText) {
+      const state = this.getStudyStateInternal();
+      this.appendStudyEvent("assistant_message", state.stage, {
+        text: fullText,
+        status: result.status
+      });
+    }
     if (!preview) return;
 
     try {
@@ -763,20 +769,20 @@ export class MyAssistant extends Think<Env> {
 
   @callable()
   updateConfig(config: AgentConfig) {
-    // 浏览器传来的 routeId / effort 必须经过共享目录重新校验，不能直接信任。
-    const normalized = normalizeAgentConfig(config);
-    this.configure<AgentConfig>(normalized);
-    return normalized;
+    // 医学实验版固定模型。保留这个 RPC 只是兼容从 Family AI 派生的旧客户端，
+    // 即使有人手工从浏览器调用，也不会改变实际实验模型。
+    void config;
+    return STUDY_MODEL_CONFIG;
   }
 
   @callable()
   currentConfig() {
-    return normalizeAgentConfig(this.getConfig<AgentConfig>());
+    return STUDY_MODEL_CONFIG;
   }
 
   @callable()
   getUsageSummary(): UsageSummary {
-    const config = normalizeAgentConfig(this.getConfig<AgentConfig>());
+    const config = STUDY_MODEL_CONFIG;
 
     this.sql`CREATE TABLE IF NOT EXISTS usage_ledger (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
