@@ -1,0 +1,27 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "medical-edu-pi-remote-bench",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-14",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "PiBenchAgent", "class_name": "PiBenchAgent" },
+      { "name": "PiBenchDirectory", "class_name": "PiBenchDirectory" }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["PiBenchAgent", "PiBenchDirectory"]
+    }
+  ]
+}
