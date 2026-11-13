@@ -141,8 +141,9 @@ export class PiBenchAgent extends DurableObject<Env> {
       const result = await this.harness.prompt(
         "Please describe your main symptoms in detail and in chronological order.",
       );
-      this.appendEvent("assistant_message", { mode, chars: result.text.length });
-      return this.finish(mode, result.text, startedAt, before);
+      const text = result.text ?? "";
+      this.appendEvent("assistant_message", { mode, chars: text.length });
+      return this.finish(mode, text, startedAt, before);
     }
 
     if (mode === "tool") {
@@ -161,8 +162,9 @@ export class PiBenchAgent extends DurableObject<Env> {
       const result = await this.harness.prompt(
         "Use bench_evidence exactly once, then explain how the evidence changes the diagnosis.",
       );
-      this.appendEvent("assistant_message", { mode, chars: result.text.length });
-      return this.finish(mode, result.text, startedAt, before);
+      const text = result.text ?? "";
+      this.appendEvent("assistant_message", { mode, chars: text.length });
+      return this.finish(mode, text, startedAt, before);
     }
 
     throw new Error("unknown benchmark mode");
