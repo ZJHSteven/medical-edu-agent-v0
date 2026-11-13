@@ -1,7 +1,6 @@
 const base = "https://medical-edu-pi-remote-bench.zhangjiahe0830.workers.dev";
 
-async function run(mode, index) {
-  const training = `remote-${mode}-${Date.now()}-${index}`;
+async function run(mode, training, index) {
   const startedAt = new Date().toISOString();
   const response = await fetch(
     `${base}/api/run?training=${encodeURIComponent(training)}`,
@@ -15,6 +14,7 @@ async function run(mode, index) {
   const finishedAt = new Date().toISOString();
   const record = {
     mode,
+    phase: index === 1 ? "cold" : "warm",
     index,
     training,
     startedAt,
@@ -29,9 +29,18 @@ async function run(mode, index) {
   return record;
 }
 
+const stamp = Date.now();
+const plans = [
+  { mode: "history", training: `remote-warm-history-${stamp}` },
+  { mode: "tool", training: `remote-warm-tool-${stamp}` },
+];
+
 const results = [];
-for (let i = 1; i <= 3; i += 1) results.push(await run("history", i));
-for (let i = 1; i <= 3; i += 1) results.push(await run("tool", i));
+for (const plan of plans) {
+  for (let index = 1; index <= 4; index += 1) {
+    results.push(await run(plan.mode, plan.training, index));
+  }
+}
 
 console.log(
   "PI_REMOTE_BENCH_SUMMARY " +
@@ -39,6 +48,7 @@ console.log(
       generatedAt: new Date().toISOString(),
       results: results.map((item) => ({
         mode: item.mode,
+        phase: item.phase,
         index: item.index,
         training: item.training,
         startedAt: item.startedAt,
